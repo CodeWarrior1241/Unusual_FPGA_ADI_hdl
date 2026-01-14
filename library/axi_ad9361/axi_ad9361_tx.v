@@ -160,6 +160,7 @@ module axi_ad9361_tx #(
   wire    [ 5:0]  up_wack_s;
   wire    [ 5:0]  up_rack_s;
   wire    [31:0]  up_rdata_s[0:5];
+  wire            dac_sync;
 
   // master/slave
 
