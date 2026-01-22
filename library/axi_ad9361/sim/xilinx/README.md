@@ -7,7 +7,7 @@ through the DAC interface and capturing them at the ADC output.
 ## Test Description
 
 The testbench:
-1. Loads QPSK samples from `qpsk_bram_init.coe`
+1. Loads 1024 QPSK samples from `qpsk_bram_init.coe`
 2. Configures the axi_ad9361 for DMA mode via AXI-Lite
 3. Feeds samples through the DAC interface
 4. Loops TX LVDS outputs back to RX LVDS inputs
@@ -129,6 +129,20 @@ The testbench prints status messages showing:
 - Configuration steps via AXI-Lite
 - DAC and ADC sample counts
 - Loopback data verification
+
+A working interface will print this, showing that the 1024 sample set was sent through 3 cycles (1024*3=3072 samples):
+
+```
+========================================
+   Test Complete - Statistics
+========================================
+   Total ADC samples captured: 3072
+   Total DAC requests served:  3072
+   Complete buffer cycles:     3
+   ADC R1 mode:                0
+   DAC R1 mode:                0
+========================================
+```
 
 A successful run ends with:
 
