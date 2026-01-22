@@ -233,7 +233,6 @@ module axi_ad9361_tb;
         .ADC_DATAFORMAT_DISABLE(0),
         .ADC_DCFILTER_DISABLE(1),         // Disable DC filter for test
         .ADC_IQCORRECTION_DISABLE(1),     // Disable IQ correction for test
-        .ADC_IODELAY_ENABLE(0),           // Disable ADC IODELAY for simulation
         .DAC_INIT_DELAY(0),
         .DAC_CLK_EDGE_SEL(0),
         .DAC_IODELAY_ENABLE(0),
