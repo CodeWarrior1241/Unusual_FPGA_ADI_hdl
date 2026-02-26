@@ -19,6 +19,7 @@
 ##   build_adi_fmcomms2_ip "C:/my_project"
 ##
 ##   # Force rebuild all IP:
+##   source C:/Work/deps/hdl/build_fmcomms2_ip.tcl
 ##   build_adi_fmcomms2_ip "C:/my_project" 1
 ##
 ## The script will:
