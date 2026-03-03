@@ -110,6 +110,13 @@ if {[file exists work]} {
 vlib work
 vmap work work
 
+# Explicitly map Xilinx simulation libraries to the pre-compiled location.
+# This overrides any stale paths that may be baked into modelsim.ini and
+# ensures unisims_ver, unimacro_ver, and secureip always resolve correctly.
+vmap unisims_ver  $XILINX_QUESTA_LIBS/unisims_ver
+vmap unimacro_ver $XILINX_QUESTA_LIBS/unimacro_ver
+vmap secureip     $XILINX_QUESTA_LIBS/secureip
+
 # ================================================================================
 # Compile source files
 # ================================================================================

@@ -1,0 +1,12 @@
+# Questa simulation artifacts
+work/
+modelsim.ini
+*.wlf
+*.log
+*.vstf
+transcript
+qpsk_bram_data.hex
+
+# Xsim simulation artifacts
+xsim_proj/
+xvlog.pb
