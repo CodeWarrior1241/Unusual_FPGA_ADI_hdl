@@ -4,6 +4,10 @@
 ## This script builds all ADI IP cores required for FMCOMMS2/3 designs and
 ## copies them to a local directory for use in your Vivado project.
 ##
+## Intent is to build the ADI IP without invoking the ADI makefile-driven
+## system, which, while good and useful, necessitates either Linux or
+## WSL/VM for a Windows environment.
+##
 ## Usage (from Vivado TCL console):
 ##   source <path_to_this_script>/build_fmcomms2_ip.tcl
 ##   build_adi_fmcomms2_ip <target_directory> [force_rebuild]
@@ -15,11 +19,11 @@
 ##
 ## Examples:
 ##   # Normal build (skips already-built IP):
-##   source C:/Work/deps/hdl/build_fmcomms2_ip.tcl
+##   source C:/Work/deps/hdl/projects/fmcomms2/build_fmcomms2_ip.tcl
 ##   build_adi_fmcomms2_ip "C:/my_project"
 ##
 ##   # Force rebuild all IP:
-##   source C:/Work/deps/hdl/build_fmcomms2_ip.tcl
+##   source C:/Work/deps/hdl/projects/fmcomms2/build_fmcomms2_ip.tcl
 ##   build_adi_fmcomms2_ip "C:/my_project" 1
 ##
 ## The script will:
@@ -34,8 +38,8 @@
 # Get the directory where this script is located
 set script_dir [file dirname [file normalize [info script]]]
 
-# Define the ADI HDL directory (this script should be in deps/hdl/)
-set ad_hdl_dir [file normalize $script_dir]
+# Define the ADI HDL directory (this script is in deps/hdl/projects/fmcomms2/)
+set ad_hdl_dir [file normalize "$script_dir/../.."]
 
 # NOTE: We intentionally do NOT source adi_env.tcl at load time.
 # The individual IP _ip.tcl scripts source it themselves when called.
