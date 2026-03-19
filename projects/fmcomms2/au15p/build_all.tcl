@@ -180,29 +180,29 @@ proc build_all {{adi_ip_dir ""}} {
     set neorv32_home [file normalize "$project_dir/../../../../neorv32"]
 
     ###########################################################################
-    # Install NEORV32 Software Image (ad9361_loopback)
+    # Install NEORV32 Software Image (ad9361_no-os)
     ###########################################################################
-    # Copy the pre-built ad9361_loopback application image into rtl/core/
+    # Copy the pre-built ad9361_no-os application image into rtl/core/
     # so that IP packaging picks up the correct program.
 
-    set sw_app_dir  "$neorv32_home/sw/ad9361_loopback"
-    set prebuilt    "$sw_app_dir/neorv32_application_image.vhd"
-    set app_image   "$neorv32_home/rtl/core/neorv32_application_image.vhd"
+    set sw_app_dir  "$neorv32_home/sw/ad9361_no-os"
+    set prebuilt    "$sw_app_dir/neorv32_imem_image.vhd"
+    set app_image   "$neorv32_home/rtl/core/neorv32_imem_image.vhd"
 
     if {[file exists $prebuilt]} {
-        puts "INFO: Installing pre-built ad9361_loopback image..."
+        puts "INFO: Installing pre-built ad9361_no-os image..."
         file copy -force $prebuilt $app_image
         puts "INFO: $prebuilt -> $app_image"
     } else {
         puts ""
-        puts "ERROR: Pre-built ad9361_loopback application image not found:"
+        puts "ERROR: Pre-built ad9361_no-os application image not found:"
         puts "         $prebuilt"
         puts ""
         puts "  To build it, run the following from a terminal with RISC-V GCC in PATH:"
         puts "    cd $sw_app_dir"
         puts "    make clean_all image"
         puts ""
-        puts "  This will produce neorv32_application_image.vhd in the sw/ad9361_loopback/ directory."
+        puts "  This will produce neorv32_imem_image.vhd in the sw/ad9361_no-os/ directory."
         puts "  Then re-run build_all."
         return -1
     }
