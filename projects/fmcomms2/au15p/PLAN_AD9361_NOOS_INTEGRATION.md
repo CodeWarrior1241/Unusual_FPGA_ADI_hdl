@@ -17,7 +17,7 @@ The design has the **data path** (LVDS TX/RX via `axi_ad9361` + HLS adapter) and
 | GPIO (Reset, Enable, Status) | **DONE** | Full mapping in build_all.tcl (resetb, sync, en_agc, ctl[3:0], status[7:0]) |
 | UART | **DONE** | 115200 baud |
 | no-os Platform Wrappers | **TODO** | SPI, GPIO, Delay, Alloc, Mutex |
-| no-os AD9361 Driver App | **TODO** | `ad9361_noos` application |
+| no-os AD9361 Driver App | **SKELETON** | `ad9361_no-os` placeholder (UART banner + WFI loop) |
 | AD9361 Chip Model (SPI) | **FUTURE** | For simulation testing |
 | DMA Engine | **FUTURE** | Not required for SPI control testing |
 
@@ -101,9 +101,95 @@ reg [7:0] registers [0:511];
 
 ---
 
-## Phase 3: no-os SW Application (`ad9361_noos`) — TODO
+## Phase 3: Integrated Vivado Project — IN PROGRESS
 
-### 3.1 Architecture
+**Current State:**
+- `build_all.tcl` is partially complete — block design automation, AXI interconnect, SPI/GPIO pin exports, and constraint sourcing are implemented
+- Skeleton C application created at `deps/neorv32/sw/ad9361_no-os/` (main.c + makefile)
+- `build_all.tcl` updated to reference `ad9361_no-os` instead of `ad9361_loopback`
+- Single-command build (`vivado -mode batch -source build_all.tcl`) has not been tested end-to-end
+
+### 3.1 C Project Placeholder — DONE
+
+Created a minimal C application in `deps/neorv32/sw/ad9361_no-os/` that compiles and links successfully against the NEORV32 build system, without yet including the no-os AD9361 driver. This ensures the Vivado flow can generate a bitstream with valid firmware BRAM initialisation.
+
+**Files created:**
+
+| File | Purpose |
+|------|---------|
+| `main.c` | Minimal NEORV32 startup: UART banner print, WFI loop |
+| `makefile` | NEORV32 `common.mk` integration, `rv32imc_zicsr_zifencei`, 64KB IMEM, 16KB DMEM |
+
+**`main.c`:**
+
+```c
+#include <neorv32.h>
+
+#define BAUD_RATE 115200
+
+int main(void) {
+    neorv32_rte_setup();
+    neorv32_uart0_setup(BAUD_RATE, 0);
+    neorv32_uart0_puts("[ad9361_no-os] Placeholder -- build OK\n");
+
+    while (1) {
+        __asm__ volatile ("wfi");
+    }
+    return 0;
+}
+```
+
+**`makefile`:**
+
+```makefile
+MARCH = rv32imc_zicsr_zifencei
+EFFORT = -Os
+USER_FLAGS += -ggdb -gdwarf-3
+USER_FLAGS += -Wl,--defsym,__neorv32_rom_size=64k
+USER_FLAGS += -Wl,--defsym,__neorv32_ram_size=16k
+
+NEORV32_HOME ?= ../..
+include $(NEORV32_HOME)/sw/common/common.mk
+
+ifeq ($(OS),Windows_NT)
+SET   = echo
+MKDIR = mkdir
+endif
+```
+
+**Key differences from `ad9361_loopback`:**
+- `MARCH = rv32imc_zicsr_zifencei` (adds M extension for hardware multiply, C for code density — required by AD9361 driver frequency math)
+- `__neorv32_rom_size=64k` (doubled from 32k — AD9361 driver is ~30KB .text alone)
+
+### 3.2 build_all.tcl Completion
+
+Complete the remaining items in `build_all.tcl` for a fully automated Vivado project build:
+
+- [x] Verify `sw_app_dir` points to `ad9361_no-os` placeholder project
+- [ ] Verify IMEM size is set to 65536 (64KB)
+- [ ] Ensure firmware `.mem` file generation and BRAM init path are correct
+- [ ] Confirm XDC constraint sourcing for all SPI/GPIO pins
+
+### 3.3 Single-Command Build Test
+
+Validate that the entire flow runs unattended:
+
+```bash
+cd deps/hdl/projects/fmcomms2/au15p
+vivado -mode batch -source build_all.tcl -tclargs --build
+```
+
+**Success criteria:**
+- RISC-V toolchain cross-compiles placeholder firmware without errors
+- Vivado synthesis and implementation complete without critical warnings
+- Bitstream is generated with BRAM initialised from placeholder firmware
+- UART banner message prints on hardware boot (if board available)
+
+---
+
+## Phase 4: no-os SW Application (`ad9361_no-os`) — TODO
+
+### 4.1 Architecture
 
 ```
 main.c  →  ad9361_api.c / ad9361.c  (unmodified no-os AD9361 driver)
@@ -115,9 +201,9 @@ main.c  →  ad9361_api.c / ad9361.c  (unmodified no-os AD9361 driver)
            NEORV32 HAL  (neorv32_spi.h, neorv32_gpio.h, neorv32_clint.h)
 ```
 
-### 3.2 Files to Create
+### 4.2 Files to Create
 
-All new files in `deps/neorv32/sw/ad9361_noos/`:
+All new files in `deps/neorv32/sw/ad9361_no-os/`:
 
 | File | Purpose |
 |------|---------|
@@ -133,7 +219,7 @@ All new files in `deps/neorv32/sw/ad9361_noos/`:
 | `neorv32_no_os_mutex.c` | No-op mutex functions (bare-metal, no RTOS) |
 | `main.c` | Init AD9361 via `ad9361_init()`, set frequency, status monitoring loop |
 
-### 3.3 Makefile Design
+### 4.3 Makefile Design
 
 Build with NEORV32 `common.mk`. Reference no-os sources in-place (no copying).
 
@@ -178,7 +264,7 @@ endif
 - **`ad9361_conv.c` excluded**: Requires axi_adc_core.h (guarded out by `AXI_ADC_NOT_PRESENT`).
 - **VPATH mechanism**: `common.mk` line 96 (`VPATH = $(sort $(dir $(SRC)))`) resolves sources across directories.
 
-### 3.4 app_config.h
+### 4.4 app_config.h
 
 Required by `ad9361_util.h` line 42 (`#include "app_config.h"`). Controls compile-time features:
 
@@ -198,7 +284,7 @@ Required by `ad9361_util.h` line 42 (`#include "app_config.h"`). Controls compil
 
 Without `HAVE_VERBOSE_MESSAGES`, `dev_err`/`dev_warn`/`dev_dbg` in `ad9361_util.h` (lines 47-60) compile to no-ops, eliminating thousands of bytes of format strings. Enable during debugging with 128KB IMEM.
 
-### 3.5 parameters.h
+### 4.5 parameters.h
 
 ```c
 #define SPI_DEVICE_ID       0
@@ -221,7 +307,7 @@ Without `HAVE_VERBOSE_MESSAGES`, `dev_err`/`dev_warn`/`dev_dbg` in `ad9361_util.
 #define BAUD_RATE           115200
 ```
 
-### 3.6 SPI Wrapper Design (`neorv32_no_os_spi.c`)
+### 4.6 SPI Wrapper Design (`neorv32_no_os_spi.c`)
 
 Implements `struct no_os_spi_platform_ops` (defined in `deps/no-os/include/no_os_spi.h` lines 210-232):
 
@@ -235,7 +321,7 @@ AD9361 SPI protocol: 3-byte transactions (byte 0 = command with R/W bit + addres
 
 The `no_os_spi.c` API dispatcher (line 65-81) manages a bus table (`spi_table[]`) and allocates a `no_os_spibus_desc` with a mutex. Our `init` is called after the bus is set up. The mutex calls (`no_os_mutex_lock/unlock` in `write_and_read` at line 171-173) need the no-op mutex implementation.
 
-### 3.7 GPIO Wrapper Design (`neorv32_no_os_gpio.c`)
+### 4.7 GPIO Wrapper Design (`neorv32_no_os_gpio.c`)
 
 Implements `struct no_os_gpio_platform_ops` (defined in `deps/no-os/include/no_os_gpio.h` lines 115-134):
 
@@ -246,7 +332,7 @@ Implements `struct no_os_gpio_platform_ops` (defined in `deps/no-os/include/no_o
 - **`gpio_ops_get_value`**: `*value = (neorv32_gpio_pin_get(desc->number)) ? 1 : 0`. Note: `neorv32_gpio_pin_get` returns a bitmask, not 0/1.
 - **`gpio_ops_remove`**: `no_os_free(desc)`.
 
-### 3.8 Delay Wrapper Design (`neorv32_no_os_delay.c`)
+### 4.8 Delay Wrapper Design (`neorv32_no_os_delay.c`)
 
 Implements functions from `deps/no-os/include/no_os_delay.h` (lines 48-54):
 
@@ -262,7 +348,7 @@ void no_os_udelay(uint32_t usecs) {
 
 AD9361 reset sequence requires precise timing (>1 us after reset deassertion before first SPI access). MTIME-based delays provide microsecond accuracy vs. the imprecise `neorv32_aux_delay_ms` busy loop.
 
-### 3.9 main.c Outline
+### 4.9 main.c Outline
 
 1. `neorv32_rte_setup()` — exception handlers
 2. Check UART0, GPIO, SPI availability
@@ -280,14 +366,14 @@ AD9361 reset sequence requires precise timing (>1 us after reset deassertion bef
 - `spi_param.mode = NO_OS_SPI_MODE_1`, `.chip_select = SPI_CS`, `.platform_ops = &neorv32_spi_ops`
 - `reference_clk_rate = 40000000UL` (40 MHz FMCOMMS2/4 XTAL)
 
-### 3.10 build_all.tcl Changes
+### 4.10 build_all.tcl Changes
 
 Two edits to `deps/hdl/projects/fmcomms2/au15p/build_all.tcl`:
 
-1. **Line 188**: `set sw_app_dir "$neorv32_home/sw/ad9361_noos"` (was `ad9361_loopback`)
+1. **Line 188**: `set sw_app_dir "$neorv32_home/sw/ad9361_no-os"` — DONE (updated from `ad9361_loopback` in Phase 3)
 2. **Line 258**: `CONFIG.IMEM_SIZE {65536}` (was `32768`)
 
-### 3.11 Memory Budget
+### 4.11 Memory Budget
 
 **IMEM (.text + .rodata) — 64KB:**
 
@@ -315,9 +401,9 @@ If 64KB IMEM is insufficient, increase to 128KB. If 16KB DMEM is insufficient, i
 
 ---
 
-## Phase 4: no-os Sources Reference
+## Phase 5: no-os Sources Reference
 
-### no-os Sources Compiled into ad9361_noos
+### no-os Sources Compiled into ad9361_no-os
 
 | Source File | Location (relative to deps/no-os/) | Purpose |
 |-------------|-------------------------------------|---------|
@@ -345,7 +431,7 @@ If 64KB IMEM is insufficient, increase to 128KB. If 16KB DMEM is insufficient, i
 
 ---
 
-## Phase 5: DMA Engine — FUTURE
+## Phase 6: DMA Engine — FUTURE
 
 Not required for SPI control testing. Current `axi_ad9361_adapter` provides CPU-polled BRAM access.
 
@@ -440,8 +526,9 @@ Key NEORV32 HAL functions used by the platform wrappers:
 - `deps/hdl/projects/fmcomms2/au15p/build_all.tcl` — AU15P synthesis build script
 - `deps/hdl/projects/fmcomms2/au15p/system_constr.xdc` — Pin constraints
 - `deps/neorv32/setups/neorv32_sw_ad9361_datapath_sim/build_all.tcl` — Simulation build (reference)
-- `deps/neorv32/sw/ad9361_loopback/main.c` — Existing loopback monitor app (reference)
-- `deps/neorv32/sw/ad9361_loopback/makefile` — Existing makefile (template)
+- `deps/neorv32/sw/ad9361_no-os/main.c` — Skeleton no-os app (placeholder, Phase 3.1)
+- `deps/neorv32/sw/ad9361_no-os/makefile` — Build config: rv32imc, 64KB IMEM, 16KB DMEM
+- `deps/neorv32/sw/ad9361_loopback/main.c` — Existing loopback monitor app (reference, used by datapath sim)
 - `deps/neorv32/sw/common/common.mk` — NEORV32 build system
 
 ### no-os AD9361 Driver
