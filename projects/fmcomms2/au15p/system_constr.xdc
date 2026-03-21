@@ -1,19 +1,65 @@
 ###############################################################################
-## Copyright (C) 2017-2023 Analog Devices, Inc. All rights reserved.
-### SPDX short identifier: ADIBSD
+# system_constr.xdc — FMCOMMS2/3/4 FMC daughter card on AU15P carrier
+# AD9361 (FMCOMMS2/3) / AD9364 (FMCOMMS4) LVDS + control pin constraints
 ###############################################################################
 
-# constraints
-# ad9361 (active FMCOMMS2/3 FMC daughter card on AU15P carrier)
-
-# NOTE: AU15P FMC LA pins span two I/O banks:
-#   Bank 66 (HP I/O, VCCO = VADJ = 1.8V) — HP_DP_* pins — supports LVDS + DIFF_TERM_ADV
-#   Bank 86 (HD I/O, VCCO = VADJ = 1.8V) — HD_DP_* pins — supports LVDS but NOT DIFF_TERM
+# ─────────────────────────────────────────────────────────────────────────────
+# I/O BANK MAPPING
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# AU15P FMC LA pins span two I/O banks:
+#   Bank 66 (HP I/O, VCCO = VADJ = 1.8V) — supports LVDS + DIFF_TERM_ADV
+#   Bank 86 (HD I/O, VCCO = VADJ = 1.8V) — supports LVDS but NOT DIFF_TERM
 #
 # Three LVDS signals land on HD bank 86:
 #   rx_data_in[5]  (LA07 = J12/H12)  — LVDS input, NO internal termination available
 #   tx_clk_out     (LA08 = H14/G14)  — LVDS output, OK
 #   tx_data_out[0] (LA11 = E13/E12)  — LVDS output, OK
+#
+# Six single-ended LVCMOS18 signals also land on HD bank 86:
+#   gpio_status[4:5]  (LA22 = B14/A14)  — input,  OK (LVCMOS18 unaffected)
+#   gpio_ctl[2:3]     (LA25 = J13/H13)  — output, OK
+#   spi_mosi/miso     (LA27 = J15/J14)  — output/input, OK
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGNAL-INTEGRITY ADVISORY — AU15P Bank 86 (HD I/O) Limitation
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# FMC_LPC_LA07 (rx_data_in[5]) lands on Bank 86, which is an HD (High-Density)
+# I/O bank on the AU15P.  HD banks do NOT support DIFF_TERM or DIFF_TERM_ADV,
+# so this LVDS input pair has no internal differential termination.
+#
+# At DDR rates above ~125 MHz the unterminated input is subject to reflections,
+# ringing, and reduced voltage-margin that can cause bit errors on this lane.
+# Because the AD9361/AD9364 DATA_CLK frequency is:
+#
+#     DATA_CLK = Sample_Rate x M
+#
+#         M = 4  (2R2T — two-channel duplex, AD9361 on FMCOMMS2/3)
+#         M = 2  (1R1T — single-channel duplex, AD9361 or AD9364 on FMCOMMS4)
+#
+# the following practical limits apply when NO external termination is fitted:
+#
+#   ┌───────────────────┬──────────────────┬─────────────────┬──────────────────────────────┐
+#   │  Board / Mode     │  Max Safe FSAMP  │  DATA_CLK (DDR) │  Notes                       │
+#   ├───────────────────┼──────────────────┼─────────────────┼──────────────────────────────┤
+#   │  FMCOMMS2/3 2R2T  │  <= 30.72 MSPS   │  <= 122.88 MHz  │  Stays below 125 MHz         │
+#   │  FMCOMMS2/3 1R1T  │  <= 61.44 MSPS   │  <= 122.88 MHz  │  Full rate is safe           │
+#   │  FMCOMMS4 (AD9364) │  <= 61.44 MSPS   │  <= 122.88 MHz  │  1R1T only; full rate safe   │
+#   └───────────────────┴──────────────────┴─────────────────┴──────────────────────────────┘
+#
+# The FMCOMMS4 (AD9364) is inherently 1R1T, so DATA_CLK never exceeds
+# 122.88 MHz even at the maximum 61.44 MSPS sample rate.  The Bank 86
+# termination limitation therefore does NOT restrict FMCOMMS4 operation
+# at any supported sample rate on this carrier.
+#
+# For FMCOMMS2/3 (AD9361) in 2R2T mode above 30.72 MSPS, add a 100-ohm
+# differential termination resistor across rx_data_in[5] (J12/H12) as
+# close to the FPGA ball as practical on the carrier PCB.
+#
+# When the sample rate is kept within the limits above, relax the rx_clk
+# timing constraint accordingly (see create_clock at end of file).
+# ─────────────────────────────────────────────────────────────────────────────
 
 set_property  -dict {PACKAGE_PIN  F24    IOSTANDARD LVDS DIFF_TERM_ADV TERM_100} [get_ports rx_clk_in_p]           ; ## G6   FMC_LPC_LA00_CC_P
 set_property  -dict {PACKAGE_PIN  F25    IOSTANDARD LVDS DIFF_TERM_ADV TERM_100} [get_ports rx_clk_in_n]           ; ## G7   FMC_LPC_LA00_CC_N
