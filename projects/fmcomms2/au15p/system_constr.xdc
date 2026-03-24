@@ -118,6 +118,12 @@ set_property  -dict {PACKAGE_PIN  L23    IOSTANDARD LVCMOS18} [get_ports spi_clk
 set_property  -dict {PACKAGE_PIN  J15    IOSTANDARD LVCMOS18} [get_ports spi_mosi]                                 ; ## C26  FMC_LPC_LA27_P  (HD bank 86)
 set_property  -dict {PACKAGE_PIN  J14    IOSTANDARD LVCMOS18} [get_ports spi_miso]                                 ; ## C27  FMC_LPC_LA27_N  (HD bank 86)
 
+# NEORV32 UART0 — USB-to-UART bridge (U21, Bank 84, LVCMOS18)
+# See AUB-15P-DK-UG-V1P6, Table 12 — FPGA to UART Connections
+
+set_property  -dict {PACKAGE_PIN  AF15   IOSTANDARD LVCMOS18} [get_ports sys_uart_tx]                              ; ## UART_TX (FPGA -> U21 FTDI_RX)
+set_property  -dict {PACKAGE_PIN  AF14   IOSTANDARD LVCMOS18} [get_ports sys_uart_rx]                              ; ## UART_RX (U21 FTDI_TX -> FPGA)
+
 # clocks
 
 create_clock -name rx_clk       -period  4.00 [get_ports rx_clk_in_p]
