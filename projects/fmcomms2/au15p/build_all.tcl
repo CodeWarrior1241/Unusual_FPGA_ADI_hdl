@@ -253,7 +253,7 @@ proc build_all {{adi_ip_dir ""}} {
         CONFIG.CLOCK_FREQUENCY {100000000} \
         CONFIG.BOOT_MODE_SELECT {0} \
         CONFIG.IMEM_EN {true} \
-        CONFIG.IMEM_SIZE {32768} \
+        CONFIG.IMEM_SIZE {131072} \
         CONFIG.DMEM_EN {true} \
         CONFIG.DMEM_SIZE {16384} \
         CONFIG.RISCV_ISA_C {true} \
@@ -274,7 +274,7 @@ proc build_all {{adi_ip_dir ""}} {
         CONFIG.IO_CLINT_EN {true} \
     ] [get_bd_cells $neorv32_cpu]
 
-    puts "INFO: NEORV32 configured (RV32IMC, 32KB IMEM, 16KB DMEM)"
+    puts "INFO: NEORV32 configured (RV32IMC, 128KB IMEM, 16KB DMEM)"
 
     # Add board clock input and MMCM
     create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 $ecs_clock_300_mhz
