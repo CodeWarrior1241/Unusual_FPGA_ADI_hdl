@@ -101,13 +101,13 @@ reg [7:0] registers [0:511];
 
 ---
 
-## Phase 3: Integrated Vivado Project — IN PROGRESS
+## Phase 3: Integrated Vivado Project — DONE
 
 **Current State:**
-- `build_all.tcl` is partially complete — block design automation, AXI interconnect, SPI/GPIO pin exports, and constraint sourcing are implemented
-- Skeleton C application created at `deps/neorv32/sw/ad9361_no-os/` (main.c + makefile)
-- `build_all.tcl` updated to reference `ad9361_no-os` instead of `ad9361_loopback`
-- Single-command build (`vivado -mode batch -source build_all.tcl`) has not been tested end-to-end
+- `build_all.tcl` complete — block design automation, AXI interconnect, SPI/GPIO pin exports, constraint sourcing, and 128KB IMEM
+- Full AD9361 no-os driver application at `deps/neorv32/sw/ad9361_no-os/`
+- `build_all.tcl` references `ad9361_no-os` and `CONFIG.IMEM_SIZE {131072}`
+- Single-command build (`vivado -mode batch -source build_all.tcl`) tested end-to-end
 
 ### 3.1 C Project Placeholder — DONE
 
@@ -161,18 +161,16 @@ endif
 - `MARCH = rv32imc_zicsr_zifencei` (adds M extension for hardware multiply, C for code density — required by AD9361 driver frequency math)
 - `__neorv32_rom_size=64k` (doubled from 32k — AD9361 driver is ~30KB .text alone)
 
-### 3.2 build_all.tcl Completion
+### 3.2 build_all.tcl Completion — DONE
 
-Complete the remaining items in `build_all.tcl` for a fully automated Vivado project build:
+- [x] Verify `sw_app_dir` points to `ad9361_no-os` project
+- [x] IMEM size set to 131072 (128KB) — 64KB was insufficient, .text overflowed by ~17KB
+- [x] Ensure firmware `.mem` file generation and BRAM init path are correct
+- [x] Confirm XDC constraint sourcing for all SPI/GPIO pins
 
-- [x] Verify `sw_app_dir` points to `ad9361_no-os` placeholder project
-- [ ] Verify IMEM size is set to 65536 (64KB)
-- [ ] Ensure firmware `.mem` file generation and BRAM init path are correct
-- [ ] Confirm XDC constraint sourcing for all SPI/GPIO pins
+### 3.3 Single-Command Build Test — DONE
 
-### 3.3 Single-Command Build Test
-
-Validate that the entire flow runs unattended:
+Validated that the entire flow runs unattended:
 
 ```bash
 cd deps/hdl/projects/fmcomms2/au15p
@@ -187,7 +185,7 @@ vivado -mode batch -source build_all.tcl -tclargs --build
 
 ---
 
-## Phase 4: no-os SW Application (`ad9361_no-os`) — TODO
+## Phase 4: no-os SW Application (`ad9361_no-os`) — DONE
 
 ### 4.1 Architecture
 
@@ -227,7 +225,7 @@ Build with NEORV32 `common.mk`. Reference no-os sources in-place (no copying).
 MARCH = rv32imc_zicsr_zifencei
 EFFORT = -Os
 USER_FLAGS += -ggdb -gdwarf-3
-USER_FLAGS += -Wl,--defsym,__neorv32_rom_size=64k
+USER_FLAGS += -Wl,--defsym,__neorv32_rom_size=128k
 USER_FLAGS += -Wl,--defsym,__neorv32_ram_size=16k
 USER_FLAGS += -Wl,--defsym,__neorv32_heap_size=4k
 USER_FLAGS += -DAXI_ADC_NOT_PRESENT
@@ -235,9 +233,11 @@ USER_FLAGS += -DAXI_ADC_NOT_PRESENT
 NOOS_HOME ?= ../../../no-OS
 AD9361_DRV = $(NOOS_HOME)/drivers/rf-transceiver/ad9361
 
+APP_SRC += $(wildcard ./*.c)
 APP_SRC += $(AD9361_DRV)/ad9361.c
 APP_SRC += $(AD9361_DRV)/ad9361_api.c
 APP_SRC += $(AD9361_DRV)/ad9361_util.c
+APP_SRC += $(AD9361_DRV)/ad9361_conv.c
 APP_SRC += $(NOOS_HOME)/drivers/api/no_os_spi.c
 APP_SRC += $(NOOS_HOME)/drivers/api/no_os_gpio.c
 APP_SRC += $(NOOS_HOME)/util/no_os_util.c
@@ -246,6 +246,8 @@ APP_SRC += $(NOOS_HOME)/util/no_os_clk.c
 APP_INC += -I .
 APP_INC += -I $(NOOS_HOME)/include
 APP_INC += -I $(AD9361_DRV)
+APP_INC += -I $(NOOS_HOME)/drivers/axi_core/axi_adc_core
+APP_INC += -I $(NOOS_HOME)/drivers/axi_core/axi_dac_core
 
 NEORV32_HOME ?= ../..
 include $(NEORV32_HOME)/sw/common/common.mk
@@ -258,10 +260,10 @@ endif
 
 **Key decisions:**
 - **`rv32imc`**: M extension for hardware multiply (critical for AD9361 frequency math). C extension for ~25% code density improvement.
-- **64KB IMEM**: AD9361 driver is ~30KB .text alone. 32KB is too small.
+- **128KB IMEM**: AD9361 driver .text overflowed 64KB by ~17KB. 128KB provides comfortable headroom.
 - **4KB heap**: AD9361 driver allocates `ad9361_rf_phy` (~400+ bytes), `ad9361_phy_platform_data` (~1KB), clock descriptors, SPI/GPIO descriptors.
-- **`-DAXI_ADC_NOT_PRESENT`**: Excludes `axi_adc_core.h`/`axi_dac_core.h` dependencies. The axi_ad9361 IP is programmed separately via its own AXI interface; the no-os AXI ADC/DAC drivers are not needed.
-- **`ad9361_conv.c` excluded**: Requires axi_adc_core.h (guarded out by `AXI_ADC_NOT_PRESENT`).
+- **`-DAXI_ADC_NOT_PRESENT`**: Excludes AXI ADC/DAC driver code. The axi_ad9361 IP is programmed separately via its own AXI interface; the no-os AXI ADC/DAC drivers are not needed.
+- **`ad9361_conv.c` included**: Provides `ad9361_dig_tune()` and `ad9361_post_setup()` no-op stubs (under `#else` of `AXI_ADC_NOT_PRESENT` guard). The unconditional `#include "axi_adc_core.h"` at line 39 requires the AXI core include paths even though the code is guarded out.
 - **VPATH mechanism**: `common.mk` line 96 (`VPATH = $(sort $(dir $(SRC)))`) resolves sources across directories.
 
 ### 4.4 app_config.h
@@ -269,20 +271,28 @@ endif
 Required by `ad9361_util.h` line 42 (`#include "app_config.h"`). Controls compile-time features:
 
 ```c
-#ifndef CONFIG_H_
-#define CONFIG_H_
+#ifndef APP_CONFIG_H_
+#define APP_CONFIG_H_
 
 #define HAVE_SPLIT_GAIN_TABLE   1
 #define HAVE_TDD_SYNTH_TABLE    1
 #define AD9361_DEVICE           1
+#define AD9364_DEVICE           0
+
+#ifndef AXI_ADC_NOT_PRESENT
 #define AXI_ADC_NOT_PRESENT
+#endif
+
 /* Disable verbose messages to save ~5-10KB code size: */
 /* #define HAVE_VERBOSE_MESSAGES */
 
-#endif
+#endif /* APP_CONFIG_H_ */
 ```
 
-Without `HAVE_VERBOSE_MESSAGES`, `dev_err`/`dev_warn`/`dev_dbg` in `ad9361_util.h` (lines 47-60) compile to no-ops, eliminating thousands of bytes of format strings. Enable during debugging with 128KB IMEM.
+**Notes:**
+- `AD9364_DEVICE 0` is required — the driver references it as a runtime flag in `ad9361_en_dis_tx/rx` (ad9361.c:1070,1087).
+- `AXI_ADC_NOT_PRESENT` is guarded with `#ifndef` to avoid redefinition warnings (also passed via `-D` in the makefile).
+- Without `HAVE_VERBOSE_MESSAGES`, `dev_err`/`dev_warn`/`dev_dbg` in `ad9361_util.h` (lines 47-60) compile to no-ops, eliminating thousands of bytes of format strings.
 
 ### 4.5 parameters.h
 
@@ -368,24 +378,27 @@ AD9361 reset sequence requires precise timing (>1 us after reset deassertion bef
 
 ### 4.10 build_all.tcl Changes
 
-Two edits to `deps/hdl/projects/fmcomms2/au15p/build_all.tcl`:
+Two edits to `deps/hdl/projects/fmcomms2/au15p/build_all.tcl` — both DONE:
 
-1. **Line 188**: `set sw_app_dir "$neorv32_home/sw/ad9361_no-os"` — DONE (updated from `ad9361_loopback` in Phase 3)
-2. **Line 258**: `CONFIG.IMEM_SIZE {65536}` (was `32768`)
+1. **Line 188**: `set sw_app_dir "$neorv32_home/sw/ad9361_no-os"` (updated from `ad9361_loopback` in Phase 3)
+2. **Line 256**: `CONFIG.IMEM_SIZE {131072}` (128KB, was `32768`)
 
 ### 4.11 Memory Budget
 
-**IMEM (.text + .rodata) — 64KB:**
+**IMEM (.text + .rodata) — 128KB:**
+
+64KB was insufficient — .text overflowed by ~17KB during compilation. Actual usage is ~81KB.
 
 | Component | Estimated Size |
 |-----------|---------------|
 | NEORV32 core library (sw/lib/source/*.c + crt0.S) | ~12 KB |
-| AD9361 driver (ad9361.c + ad9361_api.c + ad9361_util.c) | ~30-35 KB |
+| AD9361 driver (ad9361.c + ad9361_api.c + ad9361_util.c + ad9361_conv.c) | ~40-45 KB |
 | no-os API + util (no_os_spi.c, no_os_gpio.c, no_os_util.c, no_os_clk.c) | ~4 KB |
 | Platform wrappers (SPI, GPIO, delay, alloc, mutex) | ~1 KB |
 | Application main.c + AD9361_InitParam rodata | ~2 KB |
 | C library (printf, malloc, memcpy, etc. from newlib-nano) | ~5-8 KB |
-| **Total estimated** | **~54-62 KB** |
+| libgcc (__udivdi3/__umoddi3 for 64-bit division) | ~5-8 KB |
+| **Total actual** | **~81 KB** |
 
 **DMEM (.data + .bss + heap + stack) — 16KB:**
 
@@ -397,7 +410,7 @@ Two edits to `deps/hdl/projects/fmcomms2/au15p/build_all.tcl`:
 | Stack | ~8-10 KB |
 | **Total estimated** | **~14-16 KB** |
 
-If 64KB IMEM is insufficient, increase to 128KB. If 16KB DMEM is insufficient, increase to 32KB.
+If 16KB DMEM is insufficient, increase to 32KB.
 
 ---
 
@@ -415,11 +428,12 @@ If 64KB IMEM is insufficient, increase to 128KB. If 16KB DMEM is insufficient, i
 | `no_os_util.c` | `util/` | Math utilities (find_first_set_bit, rational_best_approx, do_div) |
 | `no_os_clk.c` | `util/` | Clock descriptor management |
 
+| `ad9361_conv.c` | `drivers/rf-transceiver/ad9361/` | `ad9361_dig_tune()` and `ad9361_post_setup()` no-op stubs (under `AXI_ADC_NOT_PRESENT` guard) |
+
 ### no-os Sources Excluded
 
 | Source File | Reason |
 |-------------|--------|
-| `ad9361_conv.c` | Requires `axi_adc_core.h` — guarded out by `AXI_ADC_NOT_PRESENT` |
 | `iio_ad9361.c` | IIO subsystem not needed |
 | `no_os_alloc.c` | Replaced by local implementation (avoids weak symbol complexity) |
 | `no_os_mutex.c` | Replaced by local no-op implementation (bare-metal, no RTOS) |
@@ -428,10 +442,59 @@ If 64KB IMEM is insufficient, increase to 128KB. If 16KB DMEM is insufficient, i
 
 - `deps/no-os/include/` — `no_os_spi.h`, `no_os_gpio.h`, `no_os_delay.h`, `no_os_alloc.h`, `no_os_mutex.h`, `no_os_error.h`, `no_os_util.h`, `no_os_clk.h`
 - `deps/no-os/drivers/rf-transceiver/ad9361/` — `ad9361.h`, `ad9361_api.h`, `ad9361_util.h`, `common.h`
+- `deps/no-os/drivers/axi_core/axi_adc_core/` — `axi_adc_core.h` (required by unconditional `#include` in `ad9361_conv.c` line 39)
+- `deps/no-os/drivers/axi_core/axi_dac_core/` — `axi_dac_core.h` (same reason)
 
 ---
 
-## Phase 6: DMA Engine — FUTURE
+## Phase 6: UART Command Interface (Snapshot Handler) — TODO
+
+Integrate the serial command interface from `deps/neorv32/sw/snapshot_handler/` into the `ad9361_no-os` application. This replaces the current status polling loop in `main.c` with a UART command loop that allows a MATLAB/Python host to control the AD9361 and capture IQ data.
+
+### 6.1 Reference Implementation
+
+The existing `snapshot_handler` (`deps/neorv32/sw/snapshot_handler/main.c`) provides:
+
+| Command | Response | Action |
+|---------|----------|--------|
+| `enable_rf\n` | `rf_enabled\n` | Assert `up_enable` + `up_txnrx` GPIO pins |
+| `disable_rf\n` | `rf_disabled\n` | Deassert `up_enable` + `up_txnrx` GPIO pins |
+| `enable_snapshot\n` | `snapshot_enabled\n` + 4096 bytes IQ data | Read 1024 IQ samples from BRAM at `0xC0000000` |
+
+IQ data format: 1024 samples x 4 bytes, little-endian `[I_lo, I_hi, Q_lo, Q_hi]`, 16-bit signed I and Q.
+
+### 6.2 Integration Approach
+
+Merge the snapshot_handler command loop into `ad9361_no-os/main.c`, replacing the status polling loop after AD9361 init completes:
+
+1. **AD9361 init** runs first (SPI calibration, ENSM → FDD)
+2. **Command loop** replaces the status polling `while(1)`:
+   - `enable_rf` / `disable_rf` — toggle `up_enable` + `up_txnrx` GPIO pins (same as snapshot_handler `RF_ENABLE_PIN`, but now controls both data path pins)
+   - `enable_snapshot` — capture 1024 IQ samples from BRAM and send over UART
+   - New AD9361-specific commands (future):
+     - `set_rx_freq <Hz>` — call `ad9361_set_rx_lo_freq()`
+     - `set_tx_freq <Hz>` — call `ad9361_set_tx_lo_freq()`
+     - `get_status` — read ENSM state and GPIO status
+     - `set_tx_atten <mdB>` — call `ad9361_set_tx_attenuation()`
+
+### 6.3 Files to Modify
+
+| File | Change |
+|------|--------|
+| `main.c` | Replace status loop with UART command parser; add `capture_iq_samples()`, `send_iq_data()`, `read_command()` functions from snapshot_handler |
+| `parameters.h` | Already has `BRAM_BASE`, `GPIO_UP_ENABLE_PIN`, `GPIO_UP_TXNRX_PIN` — no changes needed |
+
+### 6.4 UART Protocol
+
+Same as snapshot_handler: 115200 baud, 8N1, LF-terminated ASCII commands, binary IQ data payload.
+
+### 6.5 Memory Impact
+
+The snapshot_handler adds ~4KB .bss (`iq_buffer[4096]`) and ~1KB .text (command parser + BRAM read loop). Current DMEM budget has ~2KB headroom — the 4KB `iq_buffer` will require increasing DMEM to 32KB.
+
+---
+
+## Phase 7: DMA Engine — FUTURE
 
 Not required for SPI control testing. Current `axi_ad9361_adapter` provides CPU-polled BRAM access.
 
@@ -442,7 +505,7 @@ Not required for SPI control testing. Current `axi_ad9361_adapter` provides CPU-
 1. **`strsep` missing on RISC-V newlib** — `ad9361_util.h` has a `#ifdef WIN32` stub. If RISC-V newlib lacks `strsep`, add a local implementation.
 2. **`spi_csn_o` bus width** — NEORV32 exposes 8-bit CS bus. XDC expects scalar `spi_csn_0`. May need `xlslice` in build_all.tcl to extract bit 0. Verify when running Vivado.
 3. **64-bit division** — AD9361 driver uses `uint64_t` division for frequency calculations. libgcc provides `__udivdi3`/`__umoddi3`. Hardware M extension accelerates the 32-bit operations these use internally.
-4. **Binary too large for 64KB** — Enable `HAVE_VERBOSE_MESSAGES` only after confirming fit; if still too large, increase to 128KB IMEM.
+4. **Binary too large for 64KB** — RESOLVED: IMEM increased to 128KB. .text was ~81KB. `HAVE_VERBOSE_MESSAGES` remains disabled.
 5. **`printf` redirection** — NEORV32 newlib-nano provides `printf` via UART0 (crt0 provides `_write` syscall). The AD9361 driver's `dev_err` macros use `printf` when `HAVE_VERBOSE_MESSAGES` is enabled. No float printf (`-u _printf_float`) to keep code size down.
 6. **Heap fragmentation** — AD9361 driver allocates during `ad9361_init()` and never frees. No fragmentation concern for single init.
 
@@ -452,7 +515,7 @@ Not required for SPI control testing. Current `axi_ad9361_adapter` provides CPU-
 
 | Peripheral | Base Address | Size | Status |
 |------------|--------------|------|--------|
-| NEORV32 Internal | `0x00000000` | 64KB IMEM + 16KB DMEM | Existing (IMEM to increase to 64KB) |
+| NEORV32 Internal | `0x00000000` | 128KB IMEM + 16KB DMEM | IMEM increased to 128KB |
 | QPSK BRAM | `0xC0000000` | 32KB | Existing |
 | axi_ad9361 | `0x44A00000` | 64KB | Existing |
 | axi_ad9361_adapter | `0x44A10000` | 16KB | Existing |
