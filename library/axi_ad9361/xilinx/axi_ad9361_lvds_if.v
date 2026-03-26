@@ -439,8 +439,10 @@ module axi_ad9361_lvds_if #(
   // receive data interface, ibuf -> idelay -> iddr
 
   genvar i;
+
+  // rx data bits [4:0] — differential (HP bank)
   generate
-  for (i = 0; i < 6; i = i + 1) begin: g_rx_data
+  for (i = 0; i < 5; i = i + 1) begin: g_rx_data
   ad_data_in #(
     .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
     .IODELAY_CTRL (0),
@@ -461,6 +463,27 @@ module axi_ad9361_lvds_if #(
     .delay_locked ());
   end
   endgenerate
+
+  // rx data bit [5] — single-ended (AU15P HD bank 86, no LVDS support)
+  ad_data_in #(
+    .SINGLE_ENDED (1),
+    .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
+    .IODELAY_CTRL (0),
+    .IODELAY_GROUP (IO_DELAY_GROUP),
+    .REFCLK_FREQUENCY (DELAY_REFCLK_FREQUENCY)
+  ) i_rx_data_5 (
+    .rx_clk (l_clk),
+    .rx_data_in_p (rx_data_in_p[5]),
+    .rx_data_in_n (rx_data_in_n[5]),
+    .rx_data_p (rx_data_1_s[5]),
+    .rx_data_n (rx_data_0_s[5]),
+    .up_clk (up_clk),
+    .up_dld (up_adc_dld[5]),
+    .up_dwdata (up_adc_dwdata[29:25]),
+    .up_drdata (up_adc_drdata[29:25]),
+    .delay_clk (delay_clk),
+    .delay_rst (delay_rst),
+    .delay_locked ());
 
   // receive frame interface, ibuf -> idelay -> iddr
 
@@ -485,8 +508,31 @@ module axi_ad9361_lvds_if #(
 
   // transmit data interface, oddr -> obuf
 
+  // tx data bit [0] — pseudo-differential (AU15P HD bank 86, no LVDS support)
+  ad_data_out #(
+    .PSEUDO_DIFF (1),
+    .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
+    .IODELAY_ENABLE (DAC_IODELAY_ENABLE),
+    .IODELAY_CTRL (0),
+    .IODELAY_GROUP (IO_DELAY_GROUP),
+    .REFCLK_FREQUENCY (DELAY_REFCLK_FREQUENCY)
+  ) i_tx_data_0 (
+    .tx_clk (l_clk),
+    .tx_data_p (tx_data_1[0]),
+    .tx_data_n (tx_data_0[0]),
+    .tx_data_out_p (tx_data_out_p[0]),
+    .tx_data_out_n (tx_data_out_n[0]),
+    .up_clk (up_clk),
+    .up_dld (up_dac_dld[0]),
+    .up_dwdata (up_dac_dwdata[4:0]),
+    .up_drdata (up_dac_drdata[4:0]),
+    .delay_clk (delay_clk),
+    .delay_rst (delay_rst),
+    .delay_locked ());
+
+  // tx data bits [5:1] — differential (HP bank)
   generate
-  for (i = 0; i < 6; i = i + 1) begin: g_tx_data
+  for (i = 1; i < 6; i = i + 1) begin: g_tx_data
   ad_data_out #(
     .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
     .IODELAY_ENABLE (DAC_IODELAY_ENABLE),
@@ -532,8 +578,10 @@ module axi_ad9361_lvds_if #(
     .delay_locked ());
 
   // transmit clock interface, oddr -> obuf
+  // pseudo-differential: AU15P HD bank 86, no LVDS support
 
   ad_data_out #(
+    .PSEUDO_DIFF (1),
     .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
     .IODELAY_ENABLE (DAC_IODELAY_ENABLE),
     .IODELAY_CTRL (0),

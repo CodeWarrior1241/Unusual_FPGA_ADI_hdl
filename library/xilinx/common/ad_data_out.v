@@ -39,6 +39,7 @@ module ad_data_out #(
 
   parameter   FPGA_TECHNOLOGY = 0,
   parameter   SINGLE_ENDED = 0,
+  parameter   PSEUDO_DIFF = 0,
   parameter   IDDR_CLK_EDGE ="SAME_EDGE",
   // for 7 series devices
   parameter   ODELAY_TYPE = "VAR_LOAD",
@@ -262,7 +263,16 @@ module ad_data_out #(
   // obuf
 
   generate
-  if (SINGLE_ENDED == 1) begin
+  if (PSEUDO_DIFF == 1) begin
+    // Pseudo-differential: two LVCMOS OBUFs, N driven as inverted P.
+    // For HD bank pins that cannot support true LVDS (e.g. AU15P Bank 86).
+    OBUF i_tx_data_obuf (
+      .I (tx_data_odelay_s),
+      .O (tx_data_out_p));
+    OBUF i_tx_data_obuf_n (
+      .I (~tx_data_odelay_s),
+      .O (tx_data_out_n));
+  end else if (SINGLE_ENDED == 1) begin
     assign tx_data_out_n = 1'b0;
     OBUF i_tx_data_obuf (
       .I (tx_data_odelay_s),

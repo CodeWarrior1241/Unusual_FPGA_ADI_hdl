@@ -356,8 +356,12 @@ proc build_all {{adi_ip_dir ""}} {
         set_property name spi_mosi [get_bd_ports spi_dat_o_0]
         make_bd_pins_external [get_bd_pins $neorv32_cpu/spi_dat_i]
         set_property name spi_miso [get_bd_ports spi_dat_i_0]
-        make_bd_pins_external [get_bd_pins $neorv32_cpu/spi_csn_o]
-        set_property name spi_csn_0 [get_bd_ports spi_csn_o_0]
+        # spi_csn_o is an 8-bit bus — extract bit 0 via xlslice for the single AD9361 CS
+        create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 spi_csn_slice
+        set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0}] [get_bd_cells spi_csn_slice]
+        connect_bd_net [get_bd_pins $neorv32_cpu/spi_csn_o] [get_bd_pins spi_csn_slice/Din]
+        create_bd_port -dir O spi_csn_0
+        connect_bd_net [get_bd_pins spi_csn_slice/Dout] [get_bd_ports spi_csn_0]
     endgroup
 
     # Create the main AXI CPU interconnect
@@ -402,6 +406,7 @@ proc build_all {{adi_ip_dir ""}} {
     # Create AD9361 core
     create_bd_cell -type ip -vlnv analog.com:user:axi_ad9361:1.0 $axi_ad9361
     set_property -dict [list \
+        CONFIG.FPGA_TECHNOLOGY {3} \
         CONFIG.CMOS_OR_LVDS_N {0} \
         CONFIG.ID {0} \
         CONFIG.DAC_DDS_TYPE {1} \
@@ -415,34 +420,74 @@ proc build_all {{adi_ip_dir ""}} {
     create_bd_port -dir I rx_clk_in_n
     create_bd_port -dir I rx_frame_in_p
     create_bd_port -dir I rx_frame_in_n
-    create_bd_port -dir I -from 5 -to 0 rx_data_in_p
-    create_bd_port -dir I -from 5 -to 0 rx_data_in_n
+    # RX data ports — bits [4:0] are HP bank (differential _p/_n naming OK)
+    # bit [5] is HD bank 86 — renamed to avoid Vivado differential inference
+    create_bd_port -dir I -from 4 -to 0 rx_data_in_p
+    create_bd_port -dir I -from 4 -to 0 rx_data_in_n
+    create_bd_port -dir I rx_data_5_se        ;# rx_data_in_p[5] on HD bank 86 (IBUF only)
+    create_bd_port -dir I rx_data_5_se_unused  ;# rx_data_in_n[5] on HD bank 86 (unconnected)
 
-    # TX ports
-    create_bd_port -dir O tx_clk_out_p
-    create_bd_port -dir O tx_clk_out_n
+    # TX ports — HP bank (differential _p/_n naming OK)
     create_bd_port -dir O tx_frame_out_p
     create_bd_port -dir O tx_frame_out_n
-    create_bd_port -dir O -from 5 -to 0 tx_data_out_p
-    create_bd_port -dir O -from 5 -to 0 tx_data_out_n
+    create_bd_port -dir O -from 5 -to 1 tx_data_out_p
+    create_bd_port -dir O -from 5 -to 1 tx_data_out_n
+
+    # TX ports — HD bank 86 (pseudo-differential LVCMOS18)
+    # Renamed to avoid Vivado _p/_n differential pair inference.
+    # PSEUDO_DIFF=1 in axi_ad9361_lvds_if.v drives N as inverted P.
+    create_bd_port -dir O tx_clk_se_true
+    create_bd_port -dir O tx_clk_se_comp
+    create_bd_port -dir O tx_d0_se_true
+    create_bd_port -dir O tx_d0_se_comp
 
     # Control ports (directly from axi_ad9361)
     create_bd_port -dir O enable
     create_bd_port -dir O txnrx
 
-    # Connect AD9361 LVDS ports
+    # ─── RX data: concat 5-bit bus + 1-bit scalar into 6-bit IP pin ───
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 rx_data_p_concat
+    set_property -dict [list CONFIG.NUM_PORTS {2} CONFIG.IN0_WIDTH {5} CONFIG.IN1_WIDTH {1}] [get_bd_cells rx_data_p_concat]
+    connect_bd_net [get_bd_ports rx_data_in_p]  [get_bd_pins rx_data_p_concat/In0]
+    connect_bd_net [get_bd_ports rx_data_5_se]  [get_bd_pins rx_data_p_concat/In1]
+    connect_bd_net [get_bd_pins rx_data_p_concat/dout] [get_bd_pins $axi_ad9361/rx_data_in_p]
+
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 rx_data_n_concat
+    set_property -dict [list CONFIG.NUM_PORTS {2} CONFIG.IN0_WIDTH {5} CONFIG.IN1_WIDTH {1}] [get_bd_cells rx_data_n_concat]
+    connect_bd_net [get_bd_ports rx_data_in_n]       [get_bd_pins rx_data_n_concat/In0]
+    connect_bd_net [get_bd_ports rx_data_5_se_unused] [get_bd_pins rx_data_n_concat/In1]
+    connect_bd_net [get_bd_pins rx_data_n_concat/dout] [get_bd_pins $axi_ad9361/rx_data_in_n]
+
+    # ─── TX data: slice 6-bit IP pin into 5-bit bus + 1-bit scalar ───
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_p_hp_slice
+    set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {5} CONFIG.DIN_TO {1}] [get_bd_cells tx_data_p_hp_slice]
+    connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_p] [get_bd_pins tx_data_p_hp_slice/Din]
+    connect_bd_net [get_bd_pins tx_data_p_hp_slice/Dout]   [get_bd_ports tx_data_out_p]
+
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_n_hp_slice
+    set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {5} CONFIG.DIN_TO {1}] [get_bd_cells tx_data_n_hp_slice]
+    connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_n] [get_bd_pins tx_data_n_hp_slice/Din]
+    connect_bd_net [get_bd_pins tx_data_n_hp_slice/Dout]   [get_bd_ports tx_data_out_n]
+
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_p_hd_slice
+    set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0}] [get_bd_cells tx_data_p_hd_slice]
+    connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_p] [get_bd_pins tx_data_p_hd_slice/Din]
+    connect_bd_net [get_bd_pins tx_data_p_hd_slice/Dout]   [get_bd_ports tx_d0_se_true]
+
+    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_n_hd_slice
+    set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0}] [get_bd_cells tx_data_n_hd_slice]
+    connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_n] [get_bd_pins tx_data_n_hd_slice/Din]
+    connect_bd_net [get_bd_pins tx_data_n_hd_slice/Dout]   [get_bd_ports tx_d0_se_comp]
+
+    # ─── Direct connections (unchanged) ───
     connect_bd_net [get_bd_ports rx_clk_in_p] [get_bd_pins $axi_ad9361/rx_clk_in_p]
     connect_bd_net [get_bd_ports rx_clk_in_n] [get_bd_pins $axi_ad9361/rx_clk_in_n]
     connect_bd_net [get_bd_ports rx_frame_in_p] [get_bd_pins $axi_ad9361/rx_frame_in_p]
     connect_bd_net [get_bd_ports rx_frame_in_n] [get_bd_pins $axi_ad9361/rx_frame_in_n]
-    connect_bd_net [get_bd_ports rx_data_in_p] [get_bd_pins $axi_ad9361/rx_data_in_p]
-    connect_bd_net [get_bd_ports rx_data_in_n] [get_bd_pins $axi_ad9361/rx_data_in_n]
-    connect_bd_net [get_bd_ports tx_clk_out_p] [get_bd_pins $axi_ad9361/tx_clk_out_p]
-    connect_bd_net [get_bd_ports tx_clk_out_n] [get_bd_pins $axi_ad9361/tx_clk_out_n]
+    connect_bd_net [get_bd_ports tx_clk_se_true] [get_bd_pins $axi_ad9361/tx_clk_out_p]
+    connect_bd_net [get_bd_ports tx_clk_se_comp] [get_bd_pins $axi_ad9361/tx_clk_out_n]
     connect_bd_net [get_bd_ports tx_frame_out_p] [get_bd_pins $axi_ad9361/tx_frame_out_p]
     connect_bd_net [get_bd_ports tx_frame_out_n] [get_bd_pins $axi_ad9361/tx_frame_out_n]
-    connect_bd_net [get_bd_ports tx_data_out_p] [get_bd_pins $axi_ad9361/tx_data_out_p]
-    connect_bd_net [get_bd_ports tx_data_out_n] [get_bd_pins $axi_ad9361/tx_data_out_n]
     connect_bd_net [get_bd_ports enable] [get_bd_pins $axi_ad9361/enable]
     connect_bd_net [get_bd_ports txnrx] [get_bd_pins $axi_ad9361/txnrx]
 
