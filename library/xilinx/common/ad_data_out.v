@@ -122,6 +122,8 @@ module ad_data_out #(
 
   wire                tx_data_oddr_s;
   wire                tx_data_odelay_s;
+  wire                tx_data_oddr_inv_s;
+  wire                tx_data_odelay_inv_s;
 
   // internal registers
 
@@ -162,6 +164,7 @@ module ad_data_out #(
   generate
   if (IODELAY_ENABLE == 0) begin
     assign tx_data_odelay_s = tx_data_oddr_s;
+    assign tx_data_odelay_inv_s = tx_data_oddr_inv_s;
     assign up_drdata = 5'd0;
   end
   endgenerate
@@ -180,6 +183,26 @@ module ad_data_out #(
       .D1 (tx_data_n),
       .D2 (tx_data_p),
       .Q (tx_data_oddr_s));
+  end
+  endgenerate
+
+  // Second ODDRE1 with swapped D1/D2 for pseudo-differential N pin.
+  // Each ODDRE1 is placed in its own I/O tile, avoiding fabric routing
+  // of the ODDR output between I/O tiles on HD banks.
+
+  generate
+  if (((FPGA_TECHNOLOGY == ULTRASCALE) || (FPGA_TECHNOLOGY == ULTRASCALE_PLUS))
+      && (PSEUDO_DIFF == 1)) begin
+    ODDRE1 #(
+      .SIM_DEVICE (IODELAY_SIM_DEVICE)
+    ) i_tx_data_oddr_inv (
+      .SR (1'b0),
+      .C (tx_clk),
+      .D1 (tx_data_p),
+      .D2 (tx_data_n),
+      .Q (tx_data_oddr_inv_s));
+  end else begin
+    assign tx_data_oddr_inv_s = 1'b0;
   end
   endgenerate
 
@@ -264,13 +287,14 @@ module ad_data_out #(
 
   generate
   if (PSEUDO_DIFF == 1) begin
-    // Pseudo-differential: two LVCMOS OBUFs, N driven as inverted P.
-    // For HD bank pins that cannot support true LVDS (e.g. AU15P Bank 86).
+    // Pseudo-differential: two LVCMOS OBUFs, each driven by its own ODDRE1.
+    // The N-side ODDRE1 has D1/D2 swapped to produce the inverted output
+    // natively in the N pin's I/O tile, avoiding fabric routing on HD banks.
     OBUF i_tx_data_obuf (
       .I (tx_data_odelay_s),
       .O (tx_data_out_p));
     OBUF i_tx_data_obuf_n (
-      .I (~tx_data_odelay_s),
+      .I (tx_data_odelay_inv_s),
       .O (tx_data_out_n));
   end else if (SINGLE_ENDED == 1) begin
     assign tx_data_out_n = 1'b0;
