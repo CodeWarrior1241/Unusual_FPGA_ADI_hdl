@@ -137,4 +137,4 @@ set_property  -dict {PACKAGE_PIN  AF14   IOSTANDARD LVCMOS18} [get_ports sys_uar
 
 # clocks
 
-create_clock -name rx_clk       -period  4.00 [get_ports rx_clk_in_p]
+create_clock -name rx_clk       -period  16.276 [get_ports rx_clk_in_p]  ; ## 61.44 MHz (2R2T LVDS DDR clock)
