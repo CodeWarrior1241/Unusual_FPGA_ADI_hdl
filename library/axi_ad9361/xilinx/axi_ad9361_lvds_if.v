@@ -465,9 +465,11 @@ module axi_ad9361_lvds_if #(
   endgenerate
 
   // rx data bit [5] — single-ended (AU15P HD bank 86, no LVDS support)
+  // IODELAY disabled: HD banks cannot host IDELAYE3 primitives.
   ad_data_in #(
     .SINGLE_ENDED (1),
     .FPGA_TECHNOLOGY (FPGA_TECHNOLOGY),
+    .IODELAY_ENABLE (0),
     .IODELAY_CTRL (0),
     .IODELAY_GROUP (IO_DELAY_GROUP),
     .REFCLK_FREQUENCY (DELAY_REFCLK_FREQUENCY)

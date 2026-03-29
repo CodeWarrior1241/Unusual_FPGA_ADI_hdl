@@ -49,7 +49,7 @@
 #   ├───────────────────┼──────────────────┼─────────────────┼──────────────────────────────┤
 #   │  FMCOMMS2/3 2R2T  │  <= 30.72 MSPS   │  <= 122.88 MHz  │  Stays below 125 MHz         │
 #   │  FMCOMMS2/3 1R1T  │  <= 61.44 MSPS   │  <= 122.88 MHz  │  Full rate is safe           │
-#   │  FMCOMMS4 (AD9364) │  <= 61.44 MSPS   │  <= 122.88 MHz  │  1R1T only; full rate safe   │
+#   │  FMCOMMS4 (AD9364)│  <= 61.44 MSPS   │  <= 122.88 MHz  │  1R1T only; full rate safe   │
 #   └───────────────────┴──────────────────┴─────────────────┴──────────────────────────────┘
 #
 # The FMCOMMS4 (AD9364) is inherently 1R1T, so DATA_CLK never exceeds
@@ -65,7 +65,7 @@
 # and DDR I/O timing only (analogous to SERDES clocks in prior generations).
 # They have no dedicated routing to BUFGCE global clock buffers. The AD9361
 # rx_clk lands here due to the AU15P FMC pin mapping (LA00_CC → Bank 66 QBC).
-# Allow fabric routing from the IOB to the BUFGCE; acceptable at ≤61.44 MHz.
+# Allow fabric routing from the IOB to the BUFGCE; target ≤125 MHz — validate timing.
 set_property CLOCK_DEDICATED_ROUTE FALSE [get_nets Top_i/axi_ad9361/inst/i_dev_if/i_clk/i_rx_clk_ibuf/O]
 
 set_property  -dict {PACKAGE_PIN  F24    IOSTANDARD LVDS DIFF_TERM_ADV TERM_100} [get_ports rx_clk_in_p]           ; ## G6   FMC_LPC_LA00_CC_P
@@ -94,16 +94,16 @@ set_property  -dict {PACKAGE_PIN  H22    IOSTANDARD LVDS} [get_ports tx_frame_ou
 set_property  -dict {PACKAGE_PIN  E13    IOSTANDARD LVCMOS18} [get_ports tx_d0_se_true]                            ; ## H16  FMC_LPC_LA11_P  (HD bank 86)
 set_property  -dict {PACKAGE_PIN  E12    IOSTANDARD LVCMOS18} [get_ports tx_d0_se_comp]                            ; ## H17  FMC_LPC_LA11_N  (HD bank 86)
 
-set_property  -dict {PACKAGE_PIN  L18    IOSTANDARD LVDS} [get_ports {tx_data_out_p[1]}]                           ; ## G15  FMC_LPC_LA12_P
-set_property  -dict {PACKAGE_PIN  K18    IOSTANDARD LVDS} [get_ports {tx_data_out_n[1]}]                           ; ## G16  FMC_LPC_LA12_N
-set_property  -dict {PACKAGE_PIN  K22    IOSTANDARD LVDS} [get_ports {tx_data_out_p[2]}]                           ; ## D17  FMC_LPC_LA13_P
-set_property  -dict {PACKAGE_PIN  K23    IOSTANDARD LVDS} [get_ports {tx_data_out_n[2]}]                           ; ## D18  FMC_LPC_LA13_N
-set_property  -dict {PACKAGE_PIN  E25    IOSTANDARD LVDS} [get_ports {tx_data_out_p[3]}]                           ; ## C14  FMC_LPC_LA10_P
-set_property  -dict {PACKAGE_PIN  E26    IOSTANDARD LVDS} [get_ports {tx_data_out_n[3]}]                           ; ## C15  FMC_LPC_LA10_N
-set_property  -dict {PACKAGE_PIN  L20    IOSTANDARD LVDS} [get_ports {tx_data_out_p[4]}]                           ; ## C18  FMC_LPC_LA14_P
-set_property  -dict {PACKAGE_PIN  K20    IOSTANDARD LVDS} [get_ports {tx_data_out_n[4]}]                           ; ## C19  FMC_LPC_LA14_N
-set_property  -dict {PACKAGE_PIN  K21    IOSTANDARD LVDS} [get_ports {tx_data_out_p[5]}]                           ; ## H19  FMC_LPC_LA15_P
-set_property  -dict {PACKAGE_PIN  J21    IOSTANDARD LVDS} [get_ports {tx_data_out_n[5]}]                           ; ## H20  FMC_LPC_LA15_N
+set_property  -dict {PACKAGE_PIN  L18    IOSTANDARD LVDS} [get_ports {tx_data_out_p[0]}]                           ; ## G15  FMC_LPC_LA12_P  (AD9361 bit 1)
+set_property  -dict {PACKAGE_PIN  K18    IOSTANDARD LVDS} [get_ports {tx_data_out_n[0]}]                           ; ## G16  FMC_LPC_LA12_N
+set_property  -dict {PACKAGE_PIN  K22    IOSTANDARD LVDS} [get_ports {tx_data_out_p[1]}]                           ; ## D17  FMC_LPC_LA13_P  (AD9361 bit 2)
+set_property  -dict {PACKAGE_PIN  K23    IOSTANDARD LVDS} [get_ports {tx_data_out_n[1]}]                           ; ## D18  FMC_LPC_LA13_N
+set_property  -dict {PACKAGE_PIN  E25    IOSTANDARD LVDS} [get_ports {tx_data_out_p[2]}]                           ; ## C14  FMC_LPC_LA10_P  (AD9361 bit 3)
+set_property  -dict {PACKAGE_PIN  E26    IOSTANDARD LVDS} [get_ports {tx_data_out_n[2]}]                           ; ## C15  FMC_LPC_LA10_N
+set_property  -dict {PACKAGE_PIN  L20    IOSTANDARD LVDS} [get_ports {tx_data_out_p[3]}]                           ; ## C18  FMC_LPC_LA14_P  (AD9361 bit 4)
+set_property  -dict {PACKAGE_PIN  K20    IOSTANDARD LVDS} [get_ports {tx_data_out_n[3]}]                           ; ## C19  FMC_LPC_LA14_N
+set_property  -dict {PACKAGE_PIN  K21    IOSTANDARD LVDS} [get_ports {tx_data_out_p[4]}]                           ; ## H19  FMC_LPC_LA15_P  (AD9361 bit 5)
+set_property  -dict {PACKAGE_PIN  J21    IOSTANDARD LVDS} [get_ports {tx_data_out_n[4]}]                           ; ## H20  FMC_LPC_LA15_N
 
 set_property  -dict {PACKAGE_PIN  L24    IOSTANDARD LVCMOS18} [get_ports enable]                                   ; ## G18  FMC_LPC_LA16_P
 set_property  -dict {PACKAGE_PIN  L25    IOSTANDARD LVCMOS18} [get_ports txnrx]                                    ; ## G19  FMC_LPC_LA16_N
@@ -137,4 +137,4 @@ set_property  -dict {PACKAGE_PIN  AF14   IOSTANDARD LVCMOS18} [get_ports sys_uar
 
 # clocks
 
-create_clock -name rx_clk       -period  16.276 [get_ports rx_clk_in_p]  ; ## 61.44 MHz (2R2T LVDS DDR clock)
+create_clock -name rx_clk       -period  8.0    [get_ports rx_clk_in_p]  ; ## 125 MHz max (LVDS DDR clock)
