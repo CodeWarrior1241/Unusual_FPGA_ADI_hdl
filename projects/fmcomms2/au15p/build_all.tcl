@@ -717,6 +717,7 @@ proc build_all {{adi_ip_dir ""}} {
     set_property -dict [list CONFIG.HAS_TLAST.VALUE_SRC USER] [get_bd_cells $ad9361_cdc_tx_streaming_fifo]
     set_property -dict [list \
         CONFIG.FIFO_DEPTH {256} \
+        CONFIG.HAS_TLAST {1} \
         CONFIG.IS_ACLK_ASYNC {1} \
     ] [get_bd_cells $ad9361_cdc_tx_streaming_fifo]
 
@@ -734,6 +735,7 @@ proc build_all {{adi_ip_dir ""}} {
     set_property -dict [list CONFIG.HAS_TLAST.VALUE_SRC USER] [get_bd_cells $ad9361_cdc_rx_streaming_fifo]
     set_property -dict [list \
         CONFIG.FIFO_DEPTH {256} \
+        CONFIG.HAS_TLAST {1} \
         CONFIG.IS_ACLK_ASYNC {1} \
     ] [get_bd_cells $ad9361_cdc_rx_streaming_fifo]
 
