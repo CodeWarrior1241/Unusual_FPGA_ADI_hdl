@@ -13,8 +13,10 @@
 #   source build_all.tcl
 #   build_all
 #
-# Or with explicit ADI IP path:
-#   build_all "C:/Work/Sandbox/QPSK_Triple_Comparison/deps/hdl/library"
+# Environment Variables (required):
+#   ADI_IP_LOCATION - Path to ADI IP library root (e.g., deps/hdl/library)
+#                     Set in ~/.bashrc:
+#                       export ADI_IP_LOCATION=/path/to/deps/hdl/library
 #
 ###############################################################################
 
@@ -52,8 +54,6 @@ variable axi_streaming_adapter "axi_streaming_adapter"
 # AXI-Stream CDC FIFOs (100 MHz <-> l_clk)
 variable ad9361_cdc_tx_streaming_fifo "ad9361_cdc_tx_streaming_fifo"
 variable ad9361_cdc_rx_streaming_fifo "ad9361_cdc_rx_streaming_fifo"
-variable ad9361_cdc_ctrl_fifo "ad9361_cdc_ctrl_fifo"
-variable ad9361_cdc_status_fifo "ad9361_cdc_status_fifo"
 
 # Reset synchronizer for AD9361 l_clk domain
 variable util_ad9361_lclk_reset "util_ad9361_lclk_reset"
@@ -113,7 +113,7 @@ proc check_board_files {} {
 # Main build procedure
 ###############################################################################
 
-proc build_all {{adi_ip_dir ""}} {
+proc build_all {} {
     # Import global variables
     global project_name part project_dir top_level_bd_name
     global neorv32_cpu ecs_clock_300_mhz cpu_sys_reset neorv32_cpu_input_reset axi_cpu_interconnect
@@ -121,17 +121,29 @@ proc build_all {{adi_ip_dir ""}} {
     global axi_ad9361 axi_ad9361_adapter
     global axi_streaming_adapter
     global ad9361_cdc_tx_streaming_fifo ad9361_cdc_rx_streaming_fifo
-    global ad9361_cdc_ctrl_fifo ad9361_cdc_status_fifo
     global util_ad9361_lclk_reset
 
-
-    # Default ADI IP directory: relative to this script (deps/hdl/library)
-    if {$adi_ip_dir eq ""} {
-        set adi_ip_dir [file normalize "$project_dir/../../../library"]
-    } else {
-        set adi_ip_dir [file normalize $adi_ip_dir]
+    # Read ADI IP directory from environment variable
+    if {![info exists ::env(ADI_IP_LOCATION)]} {
+        puts ""
+        puts "==============================================================================="
+        puts "  ERROR: ADI_IP_LOCATION environment variable not set"
+        puts "==============================================================================="
+        puts ""
+        puts "  Set it to point to the ADI HDL IP library root:"
+        puts ""
+        puts "    Windows: set ADI_IP_LOCATION=C:\\Work\\QPSK_Triple_Comparison\\deps\\hdl\\library"
+        puts "    Linux:   export ADI_IP_LOCATION=/path/to/deps/hdl/library"
+        puts ""
+        puts "  The ADI library IPs must be built first:"
+        puts ""
+        puts "    cd deps/hdl/projects/fmcomms2/kcu105"
+        puts "    make"
+        puts ""
+        puts "==============================================================================="
+        return -1
     }
-
+    set adi_ip_dir [file normalize $::env(ADI_IP_LOCATION)]
     if {![file exists $adi_ip_dir]} {
         puts "ERROR: ADI IP directory does not exist: $adi_ip_dir"
         return -1
@@ -177,44 +189,6 @@ proc build_all {{adi_ip_dir ""}} {
     set synth_sources_name [get_filesets -filter {FILESET_TYPE == "DesignSrcs"}]
     set sim_sources_name [get_filesets -filter {FILESET_TYPE == "SimulationSrcs"}]
     set impl_sources_name [get_filesets -filter {FILESET_TYPE == "Constrs"}]
-
-    ###########################################################################
-    # Open-Logic VHDL Sources (olo_base_fifo_async wrapper for CDC)
-    ###########################################################################
-
-    set olo_vhdl_dir [file normalize "$project_dir/../../../../../deps/open-logic/src/base/vhdl"]
-    set wrapper_dir  [file normalize "$project_dir/../../../../../src/olo_base_fifo_async_wrapper"]
-
-    if {![file exists $olo_vhdl_dir/olo_base_fifo_async.vhd]} {
-        puts "ERROR: Open-logic sources not found at $olo_vhdl_dir"
-        puts "       Ensure deps/open-logic submodule is initialized."
-        return -1
-    }
-
-    puts "INFO: Adding open-logic VHDL sources and FIFO wrapper..."
-
-    # Open-logic dependencies require VHDL-2008 (unconstrained array elements)
-    set olo_dep_files [list \
-        $olo_vhdl_dir/olo_base_pkg_array.vhd \
-        $olo_vhdl_dir/olo_base_pkg_attribute.vhd \
-        $olo_vhdl_dir/olo_base_pkg_math.vhd \
-        $olo_vhdl_dir/olo_base_pkg_logic.vhd \
-        $olo_vhdl_dir/olo_base_pkg_string.vhd \
-        $olo_vhdl_dir/olo_base_cc_bits.vhd \
-        $olo_vhdl_dir/olo_base_ram_sdp.vhd \
-        $olo_vhdl_dir/olo_base_cc_reset.vhd \
-        $olo_vhdl_dir/olo_base_fifo_async.vhd \
-    ]
-    add_files -norecurse $olo_dep_files
-    set_property file_type {VHDL 2008} [get_files $olo_dep_files]
-
-    # Wrapper stays plain VHDL (required for module reference — Vivado rejects VHDL-2008 top)
-    add_files -norecurse $wrapper_dir/olo_base_fifo_async_wrapper.vhd
-
-    # Load open-logic scoped constraints for CDC timing (implementation only)
-    # Applies set_max_delay -datapath_only and set_bus_skew to olo_base_cc_bits instances
-    set olo_tcl_dir [file normalize "$olo_vhdl_dir/../tcl"]
-    source $olo_tcl_dir/olo_base_constraints_amd.tcl
 
     # Create the top level block design
     create_bd_design $top_level_bd_name
@@ -298,6 +272,11 @@ proc build_all {{adi_ip_dir ""}} {
     lappend current_ip_paths $hls_streaming_adapter_ip_dir
     set_property ip_repo_paths $current_ip_paths [current_project]
     update_ip_catalog -rebuild
+
+    puts "INFO: IP repo paths:"
+    foreach p [get_property ip_repo_paths [current_project]] {
+        puts "  $p"
+    }
 
     # Reopen the block design
     open_bd_design ./$project_name.srcs/$synth_sources_name/bd/$top_level_bd_name/$top_level_bd_name.bd
@@ -635,8 +614,8 @@ proc build_all {{adi_ip_dir ""}} {
 
     puts "INFO: Instantiating AXI AD9361 Adapter..."
 
-    # Create the HLS adapter IP (v4.0: AXI-Stream + ap_none, single clock domain)
-    create_bd_cell -type ip -vlnv user:hls:axi_ad9361_adapter:4.0 $axi_ad9361_adapter
+    # Create the HLS adapter IP (v5.0: AXI-Stream + ap_none, single clock domain)
+    create_bd_cell -type ip -vlnv user:hls:axi_ad9361_adapter:5.0 $axi_ad9361_adapter
 
     # Connect adapter clock and reset (l_clk domain)
     connect_bd_net [get_bd_pins $axi_ad9361/l_clk] [get_bd_pins $axi_ad9361_adapter/ap_clk]
@@ -704,8 +683,6 @@ proc build_all {{adi_ip_dir ""}} {
     connect_bd_net [get_bd_pins $ecs_clock_300_mhz/clk_out1] [get_bd_pins $axi_streaming_adapter/ap_clk]
     connect_bd_net [get_bd_pins $cpu_sys_reset/peripheral_aresetn] [get_bd_pins $axi_streaming_adapter/ap_rst_n]
 
-    # Control/Status CDC handled by async FIFOs below (ctrl_stream, status_stream)
-
     ###########################################################################
     # AXI-Stream CDC FIFOs (100 MHz <-> l_clk)
     ###########################################################################
@@ -747,38 +724,6 @@ proc build_all {{adi_ip_dir ""}} {
     # RX FIFO data path: ad9361_adapter -> FIFO -> streaming adapter
     connect_bd_intf_net [get_bd_intf_pins $axi_ad9361_adapter/rx_stream]          [get_bd_intf_pins $ad9361_cdc_rx_streaming_fifo/S_AXIS]
     connect_bd_intf_net [get_bd_intf_pins $ad9361_cdc_rx_streaming_fifo/M_AXIS]   [get_bd_intf_pins $axi_streaming_adapter/rx_stream]
-
-    # Ctrl CDC FIFO: axi_streaming_adapter (100 MHz) -> ad9361_adapter (l_clk)
-    # 128-bit wide, depth-2 distributed RAM via open-logic olo_base_fifo_async
-    create_bd_cell -type module -reference olo_base_fifo_async_wrapper $ad9361_cdc_ctrl_fifo
-
-    connect_bd_net [get_bd_pins $ecs_clock_300_mhz/clk_out1]                  [get_bd_pins $ad9361_cdc_ctrl_fifo/In_Clk]
-    connect_bd_net [get_bd_pins $cpu_sys_reset/peripheral_aresetn]             [get_bd_pins $ad9361_cdc_ctrl_fifo/In_Rst_n]
-    connect_bd_net [get_bd_pins $axi_ad9361/l_clk]                            [get_bd_pins $ad9361_cdc_ctrl_fifo/Out_Clk]
-    connect_bd_net [get_bd_pins $util_ad9361_lclk_reset/peripheral_aresetn]    [get_bd_pins $ad9361_cdc_ctrl_fifo/Out_Rst_n]
-
-    connect_bd_net [get_bd_pins $axi_streaming_adapter/ctrl_data_out]   [get_bd_pins $ad9361_cdc_ctrl_fifo/In_Data]
-    connect_bd_net [get_bd_pins $axi_streaming_adapter/ctrl_valid_out]  [get_bd_pins $ad9361_cdc_ctrl_fifo/In_Valid]
-    connect_bd_net [get_bd_pins $ad9361_cdc_ctrl_fifo/In_Ready]         [get_bd_pins $axi_streaming_adapter/ctrl_ready_in]
-    connect_bd_net [get_bd_pins $ad9361_cdc_ctrl_fifo/Out_Data]         [get_bd_pins $axi_ad9361_adapter/ctrl_data_in]
-    connect_bd_net [get_bd_pins $ad9361_cdc_ctrl_fifo/Out_Valid]        [get_bd_pins $axi_ad9361_adapter/ctrl_valid_in]
-    connect_bd_net [get_bd_pins $axi_ad9361_adapter/ctrl_ready_out]     [get_bd_pins $ad9361_cdc_ctrl_fifo/Out_Ready]
-
-    # Status CDC FIFO: ad9361_adapter (l_clk) -> axi_streaming_adapter (100 MHz)
-    # 128-bit wide, depth-2 distributed RAM via open-logic olo_base_fifo_async
-    create_bd_cell -type module -reference olo_base_fifo_async_wrapper $ad9361_cdc_status_fifo
-
-    connect_bd_net [get_bd_pins $axi_ad9361/l_clk]                              [get_bd_pins $ad9361_cdc_status_fifo/In_Clk]
-    connect_bd_net [get_bd_pins $util_ad9361_lclk_reset/peripheral_aresetn]      [get_bd_pins $ad9361_cdc_status_fifo/In_Rst_n]
-    connect_bd_net [get_bd_pins $ecs_clock_300_mhz/clk_out1]                    [get_bd_pins $ad9361_cdc_status_fifo/Out_Clk]
-    connect_bd_net [get_bd_pins $cpu_sys_reset/peripheral_aresetn]               [get_bd_pins $ad9361_cdc_status_fifo/Out_Rst_n]
-
-    connect_bd_net [get_bd_pins $axi_ad9361_adapter/status_data_out]     [get_bd_pins $ad9361_cdc_status_fifo/In_Data]
-    connect_bd_net [get_bd_pins $axi_ad9361_adapter/status_valid_out]    [get_bd_pins $ad9361_cdc_status_fifo/In_Valid]
-    connect_bd_net [get_bd_pins $ad9361_cdc_status_fifo/In_Ready]        [get_bd_pins $axi_ad9361_adapter/status_ready_in]
-    connect_bd_net [get_bd_pins $ad9361_cdc_status_fifo/Out_Data]        [get_bd_pins $axi_streaming_adapter/status_data_in]
-    connect_bd_net [get_bd_pins $ad9361_cdc_status_fifo/Out_Valid]       [get_bd_pins $axi_streaming_adapter/status_valid_in]
-    connect_bd_net [get_bd_pins $axi_streaming_adapter/status_ready_out] [get_bd_pins $ad9361_cdc_status_fifo/Out_Ready]
 
     ###########################################################################
     # AXI and Reset Connections
@@ -865,9 +810,7 @@ puts "  build_all.tcl loaded successfully"
 puts "==============================================================================="
 puts ""
 puts "  Usage: build_all"
-puts "    or:  build_all \"<path_to_adi_ip_library>\""
 puts ""
-puts "  Example:"
-puts "    build_all"
-puts "    build_all \"C:/Work/Sandbox/QPSK_Triple_Comparison/deps/hdl/library\""
+puts "  Requires ADI_IP_LOCATION environment variable to be set:"
+puts "    export ADI_IP_LOCATION=/path/to/deps/hdl/library"
 puts ""
