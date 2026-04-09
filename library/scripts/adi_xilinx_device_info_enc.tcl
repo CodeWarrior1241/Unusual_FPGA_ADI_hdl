@@ -120,6 +120,7 @@ proc adi_device_spec {cellpath param} {
              ^xcvu.?.p     {set series_name ultrascale+}
              ^x.zu..?p     {set series_name ultrascale+}
              ^xck26        {set series_name ultrascale+}
+             ^xcau         {set series_name ultrascale+}
              ^xc.u         {set series_name ultrascale }
              ^xcv[ecmph]   {set series_name versal}
              default {
