@@ -445,6 +445,7 @@ proc build_all {} {
     set_property -dict [list \
         CONFIG.CMOS_OR_LVDS_N {0} \
         CONFIG.ID {0} \
+        CONFIG.FPGA_TECHNOLOGY {3} \
         CONFIG.DAC_DDS_TYPE {1} \
         CONFIG.DAC_DDS_CORDIC_DW {14} \
         CONFIG.ADC_INIT_DELAY {11} \
