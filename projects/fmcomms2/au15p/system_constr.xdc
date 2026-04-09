@@ -135,6 +135,11 @@ set_property  -dict {PACKAGE_PIN  J14    IOSTANDARD LVCMOS18} [get_ports spi_mis
 set_property  -dict {PACKAGE_PIN  AF15   IOSTANDARD LVCMOS18} [get_ports sys_uart_tx]                              ; ## UART_TX (FPGA -> U21 FTDI_RX)
 set_property  -dict {PACKAGE_PIN  AF14   IOSTANDARD LVCMOS18} [get_ports sys_uart_rx]                              ; ## UART_RX (U21 FTDI_TX -> FPGA)
 
+# Constrain the input 300MHz clock from the Epson ECS oscillator
+
+set_property  -dict {PACKAGE_PIN  AE21   IOSTANDARD DIFF_SSTL12} [get_ports "ecs_clk_in_clk_n"]                    ; ## ecs_clk_in_clk_n  IO_L11N_T1U_N9_GC_64  (HP bank 65)
+set_property  -dict {PACKAGE_PIN  AD21   IOSTANDARD DIFF_SSTL12} [get_ports "ecs_clk_in_clk_p"]                    ; ## ecs_clk_in_clk_p  IO_L11P_T1U_N8_GC_64  (HP bank 65)
+
 # clocks
 
 create_clock -name rx_clk       -period  8.0    [get_ports rx_clk_in_p]  ; ## 125 MHz max (LVDS DDR clock)
