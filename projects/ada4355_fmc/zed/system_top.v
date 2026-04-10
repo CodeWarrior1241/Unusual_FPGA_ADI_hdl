@@ -1,6 +1,6 @@
 // ***************************************************************************
 // ***************************************************************************
-// Copyright (C) 2025 Analog Devices, Inc. All rights reserved.
+// Copyright (C) 2025-2026 Analog Devices, Inc. All rights reserved.
 //
 // In this HDL repository, there are many different and unique modules, consisting
 // of various HDL (Verilog or VHDL) components. The individual modules are
@@ -106,6 +106,7 @@ module system_top (
   inout         freq_sel1,
   inout         gpio_vld_en,
   inout         gpio_test,
+  inout         vlogic_fmc,
   input         trig_fmc_in,
   output        trig_fmc_out,
   inout         apd_supp_en,
@@ -136,7 +137,7 @@ module system_top (
   wire [ 1:0] iic_mux_sda_o_s;
   wire        iic_mux_sda_t_s;
 
-  assign gpio_i[63:43] = gpio_o[63:43];
+  assign gpio_i[63:42] = gpio_o[63:42];
   assign trig_fmc_out = trig_fmc_in;
 
   ad_iobuf #(
@@ -148,12 +149,13 @@ module system_top (
     .dio_p({gpio_bd[31:0]}));
 
   ad_iobuf #(
-    .DATA_WIDTH(9)
+    .DATA_WIDTH(10)
   ) i_iobuf_ada4355_gpio (
-    .dio_t(gpio_t[40:32]),
-    .dio_i(gpio_o[40:32]),
-    .dio_o(gpio_i[40:32]),
-    .dio_p({apd_supp_en,
+    .dio_t(gpio_t[41:32]),
+    .dio_i(gpio_o[41:32]),
+    .dio_o(gpio_i[41:32]),
+    .dio_p({vlogic_fmc,
+            apd_supp_en,
             freq_sel1,
             gain_sel3,
             gpio_test,

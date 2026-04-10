@@ -1,6 +1,6 @@
 // ***************************************************************************
 // ***************************************************************************
-// Copyright (C) 2025 Analog Devices, Inc. All rights reserved.
+// Copyright (C) 2025-2026 Analog Devices, Inc. All rights reserved.
 //
 // In this HDL repository, there are many different and unique modules, consisting
 // of various HDL (Verilog or VHDL) components. The individual modules are
@@ -150,6 +150,7 @@ module spi_engine_execution_shiftreg #(
   // interface.
 
   genvar i;
+
   // NOTE: SPI configuration (CPOL/PHA) is only hardware configurable at this point, unless ECHO_SCLK=0
   generate
   if (ECHO_SCLK == 1) begin : g_echo_sclk_miso_latch
@@ -226,6 +227,8 @@ module spi_engine_execution_shiftreg #(
 
     end
 
+    reg [3:0] last_sdi_bit_m = 4'b0;
+
     assign sdi_data = sdi_data_latch;
     assign last_sdi_bit = last_sdi_bit_r;
     assign echo_last_bit =  !last_sdi_bit_m[3] && last_sdi_bit_m[2];
@@ -233,7 +236,6 @@ module spi_engine_execution_shiftreg #(
     // sdi_data_valid is synchronous to SPI clock, so synchronize the
     // last_sdi_bit to SPI clock
 
-    reg [3:0] last_sdi_bit_m = 4'b0;
     always @(posedge clk) begin
       if (cs_activate) begin
         last_sdi_bit_m <= 4'b0;
@@ -243,9 +245,7 @@ module spi_engine_execution_shiftreg #(
     end
 
     always @(posedge clk) begin
-      if (cs_activate) begin
-        sdi_data_valid <= 1'b0;
-      end else if (sdi_enabled == 1'b1 && echo_last_bit) begin
+      if (sdi_enabled == 1'b1 && echo_last_bit) begin
         sdi_data_valid <= 1'b1;
       end else if (sdi_data_ready == 1'b1) begin
         sdi_data_valid <= 1'b0;

@@ -32,7 +32,7 @@ Contents
    AD4630-FMC <ad4630_fmc/index>
    AD469X-EVB <ad469x_evb/index>
    AD485X-FMCZ <ad485x_fmcz/index>
-   AD488X-FMC-EVB <ad488x_fmc_evb/index>
+   AD4880-FMC-EVB <ad4880_fmc_evb/index>
    AD5758-SDZ <ad5758_sdz/index>
    AD5766-SDZ <ad5766_sdz/index>
    AD57XX-ARDZ <ad57xx_ardz/index>
@@ -62,8 +62,10 @@ Contents
    AD9656-FMC <ad9656_fmc/index>
    AD9694-FMC <ad9694_fmc/index>
    AD9695-FMC <ad9695_fmc/index>
+   AD9740-FMC <ad9740_fmc/index>
    AD9783-EBZ <ad9783_ebz/index>
    ADA4355-FMC <ada4355_fmc/index>
+   ADAQ23875 <adaq23875/index>
    ADAQ7980-SDZ <adaq7980_sdz/index>
    ADAQ8092-FMC <adaq8092_fmc/index>
    ADMX100X-EVB <admx100x_evb/index>
@@ -73,6 +75,7 @@ Contents
    ADRV9009 <adrv9009/index>
    ADRV9009-ZU11EG <adrv9009zu11eg/index>
    ADRV9026 <adrv9026/index>
+   ADRV903x <adrv903x/index>
    ADRV904x <adrv904x/index>
    ADRV9361Z7035 <adrv9361z7035/index>
    ADRV9364Z7020 <adrv9364z7020/index>

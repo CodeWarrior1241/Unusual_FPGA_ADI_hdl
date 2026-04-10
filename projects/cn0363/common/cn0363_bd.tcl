@@ -1,5 +1,5 @@
 ###############################################################################
-## Copyright (C) 2016-2025 Analog Devices, Inc. All rights reserved.
+## Copyright (C) 2016-2026 Analog Devices, Inc. All rights reserved.
 ### SPDX short identifier: ADIBSD
 ###############################################################################
 
@@ -26,12 +26,6 @@ proc load_fir_filter_vector {filter_file} {
 	return $filter
 }
 
-ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO 35
-
-set_property LEFT 34 [get_bd_ports GPIO_I]
-set_property LEFT 34 [get_bd_ports GPIO_O]
-set_property LEFT 34 [get_bd_ports GPIO_T]
-
 ad_ip_instance axi_dmac axi_dma
 ad_ip_parameter axi_dma CONFIG.FIFO_SIZE 2
 ad_ip_parameter axi_dma CONFIG.DMA_TYPE_SRC 2
@@ -47,17 +41,17 @@ ad_ip_parameter axi_dma CONFIG.DMA_AXI_PROTOCOL_DEST 1
 
 # Create SPI engine controller with offload
 
-set data_width    8
-set async_spi_clk 0
-set num_cs        2
-set num_sdi       1
-set num_sdo       1
-set sdi_delay     1
-set echo_sclk     0
+set hier_spi_engine  spi_cn0363
+set data_width       8
+set async_spi_clk    0
+set offload_en       1
+set num_cs           2
+set num_sdi          1
+set num_sdo          1
+set sdi_delay        1
+set echo_sclk        0
 
-set hier_spi_engine spi_cn0363
-
-spi_engine_create $hier_spi_engine $data_width $async_spi_clk $num_cs $num_sdi $num_sdo $sdi_delay $echo_sclk
+spi_engine_create $hier_spi_engine $data_width $async_spi_clk $offload_en $num_cs $num_sdi $num_sdo $sdi_delay $echo_sclk
 
 ad_connect $sys_cpu_clk $hier_spi_engine/clk
 ad_connect sys_cpu_resetn $hier_spi_engine/resetn
@@ -118,7 +112,7 @@ current_bd_instance /processing
   ad_ip_instance fir_compiler hpf
   ad_ip_instance fir_compiler lpf
 
-	ad_ip_parameter hpf	CONFIG.CoefficientVector [load_fir_filter_vector "../common/filters/hpf.mat"]
+	ad_ip_parameter hpf	CONFIG.CoefficientVector [load_fir_filter_vector "$ad_hdl_dir/projects/cn0363/common/filters/hpf.mat"]
 	ad_ip_parameter hpf	CONFIG.Data_Fractional_Bits.VALUE_SRC USER
 	ad_ip_parameter hpf	CONFIG.Data_Sign.VALUE_SRC USER
 	ad_ip_parameter hpf	CONFIG.Data_Width.VALUE_SRC USER
@@ -133,7 +127,7 @@ current_bd_instance /processing
 	ad_ip_parameter hpf	CONFIG.Has_ARESETn true
 	ad_ip_parameter hpf	CONFIG.Reset_Data_Vector false
 
-	ad_ip_parameter lpf	CONFIG.CoefficientVector [load_fir_filter_vector "../common/filters/lpf.mat"]
+	ad_ip_parameter lpf	CONFIG.CoefficientVector [load_fir_filter_vector "$ad_hdl_dir/projects/cn0363/common/filters/lpf.mat"]
 	ad_ip_parameter lpf	CONFIG.Data_Fractional_Bits.VALUE_SRC USER
 	ad_ip_parameter lpf	CONFIG.Data_Sign.VALUE_SRC USER
 	ad_ip_parameter lpf	CONFIG.Data_Width.VALUE_SRC USER

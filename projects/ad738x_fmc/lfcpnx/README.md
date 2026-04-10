@@ -5,13 +5,13 @@
 Download the necessary Lattice Propel Builder IPs by running the following commands in the Lattice Propel Builder TCL Console:
 
 ```
-ip_catalog_install -vlnv latticesemi.com:ip:gpio:1.7.0
-ip_catalog_install -vlnv latticesemi.com:ip:spi_controller:2.1.0
-ip_catalog_install -vlnv latticesemi.com:ip:i2c_controller:2.2.0
-ip_catalog_install -vlnv latticesemi.com:ip:axi_interconnect:2.0.1
-ip_catalog_install -vlnv latticesemi.com:ip:uart:1.4.0
-ip_catalog_install -vlnv latticesemi.com:ip:axi2apb_bridge:1.3.0
-ip_catalog_install -vlnv latticesemi.com:ip:gp_timer:1.4.0
+ip_catalog_install -vlnv latticesemi.com:ip:gpio:1.8.0
+ip_catalog_install -vlnv latticesemi.com:ip:spi_controller:2.4.0
+ip_catalog_install -vlnv latticesemi.com:ip:i2c_controller:2.4.0
+ip_catalog_install -vlnv latticesemi.com:ip:axi_interconnect:2.2.1
+ip_catalog_install -vlnv latticesemi.com:ip:uart:1.5.0
+ip_catalog_install -vlnv latticesemi.com:module:apb_interconnect:1.4.0
+ip_catalog_install -vlnv latticesemi.com:ip:axi2apb_bridge:1.4.0
 ```
 
 ## Building the project
@@ -50,6 +50,16 @@ make ALERT_SPI_N=0 NUM_OF_SDI=1
 make SYSMEM_INIT_FILE=<path_to>/<sysmem_file>.mem
 ```
 
+#### Building block design only for simulation with SYSMEM_INIT_FILE
+
+```
+make pb SYSMEM_INIT_FILE=<path_to>/<sysmem_file>.mem
+```
+
+When the Propel Builder finishes generating the block design you can open the
+project, switch to simulation project, generate the Questasim simulation project
+and start the simulation.
+
 NOTE:
 
-The Software support is still work in progress and can be found here: https://github.com/analogdevicesinc/no-OS/tree/ad738x_fmcz_lattice/projects/ad738x_fmcz
+The Software support is still work in progress and can be found here: https://github.com/analogdevicesinc/no-OS/tree/add_lattice_riscvrx_ad738x_fmcz/projects/ad738x_fmcz
