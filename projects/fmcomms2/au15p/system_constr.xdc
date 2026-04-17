@@ -129,6 +129,13 @@ set_property  -dict {PACKAGE_PIN  L23    IOSTANDARD LVCMOS18} [get_ports spi_clk
 set_property  -dict {PACKAGE_PIN  J15    IOSTANDARD LVCMOS18} [get_ports spi_mosi]                                 ; ## C26  FMC_LPC_LA27_P  (HD bank 86)
 set_property  -dict {PACKAGE_PIN  J14    IOSTANDARD LVCMOS18} [get_ports spi_miso]                                 ; ## C27  FMC_LPC_LA27_N  (HD bank 86)
 
+# System Reset — Active-Low Push Button PB3 (Bank 64/65, VCCO = 1.2V)
+# See AUB-15P-DK-UG-V1P6 §5.1.30, Figure 29 — Reset Push Button
+# Directly drives the Clock Wizard resetn input; active-low with 4.7K pull-up to VCCO_64_65.
+
+set_property  -dict {PACKAGE_PIN  V19    IOSTANDARD LVCMOS12} [get_ports system_resetn]                               ; ## PB3 SYS_RST_N
+set_false_path -from [get_ports system_resetn]
+
 # NEORV32 UART0 — USB-to-UART bridge (U21, Bank 84, LVCMOS18)
 # See AUB-15P-DK-UG-V1P6, Table 12 — FPGA to UART Connections
 
