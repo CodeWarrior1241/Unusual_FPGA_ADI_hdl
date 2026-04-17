@@ -288,7 +288,7 @@ proc build_all {} {
     # Configure NEORV32 for AU15P / FMCOMMS2 application
     set_property -dict [list \
         CONFIG.CLOCK_FREQUENCY {100000000} \
-        CONFIG.BOOT_MODE_SELECT {0} \
+        CONFIG.BOOT_MODE_SELECT {2} \
         CONFIG.IMEM_EN {true} \
         CONFIG.IMEM_SIZE {131072} \
         CONFIG.DMEM_EN {true} \
