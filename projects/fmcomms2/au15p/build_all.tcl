@@ -48,10 +48,10 @@ variable qpsk_snapshot_bram "QPSK_Snapshot_BRAM"
 variable axi_ad9361 "axi_ad9361"
 variable axi_ad9361_adapter "axi_ad9361_adapter"
 
-# AXI-Lite to Streaming adapter bridge (100 MHz domain)
+# AXI-Lite to Streaming adapter bridge (150 MHz domain)
 variable axi_streaming_adapter "axi_streaming_adapter"
 
-# AXI-Stream CDC FIFOs (100 MHz <-> l_clk)
+# AXI-Stream CDC FIFOs (150 MHz <-> l_clk)
 variable ad9361_cdc_tx_streaming_fifo "ad9361_cdc_tx_streaming_fifo"
 variable ad9361_cdc_rx_streaming_fifo "ad9361_cdc_rx_streaming_fifo"
 
@@ -287,12 +287,12 @@ proc build_all {} {
 
     # Configure NEORV32 for AU15P / FMCOMMS2 application
     set_property -dict [list \
-        CONFIG.CLOCK_FREQUENCY {100000000} \
+        CONFIG.CLOCK_FREQUENCY {150000000} \
         CONFIG.BOOT_MODE_SELECT {2} \
         CONFIG.IMEM_EN {true} \
         CONFIG.IMEM_SIZE {131072} \
         CONFIG.DMEM_EN {true} \
-        CONFIG.DMEM_SIZE {16384} \
+        CONFIG.DMEM_SIZE {32768} \
         CONFIG.RISCV_ISA_C {true} \
         CONFIG.RISCV_ISA_M {true} \
         CONFIG.RISCV_ISA_Zicntr {true} \
@@ -313,14 +313,12 @@ proc build_all {} {
 
     puts "INFO: NEORV32 configured (RV32IMC, 128KB IMEM, 16KB DMEM)"
 
-    # Add board clock input and MMCM
+    # Add board clock input and MMCM.
+    # Specify only the frequencies we need; let Vivado pick MMCM M/D/CLKOUT divides.
     create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 $ecs_clock_300_mhz
     set_property -dict [list \
         CONFIG.AUTO_PRIMITIVE {PLL} \
-        CONFIG.CLKOUT1_JITTER {101.573} \
-        CONFIG.CLKOUT1_PHASE_ERROR {84.323} \
-        CONFIG.CLKOUT2_JITTER {81.816} \
-        CONFIG.CLKOUT2_PHASE_ERROR {84.323} \
+        CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {150.000} \
         CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {300.000} \
         CONFIG.CLKOUT2_USED {true} \
         CONFIG.CLKOUT2_DRIVES {Buffer} \
@@ -330,23 +328,14 @@ proc build_all {} {
         CONFIG.CLKOUT6_DRIVES {Buffer} \
         CONFIG.CLKOUT7_DRIVES {Buffer} \
         CONFIG.FEEDBACK_SOURCE {FDBK_AUTO} \
-        CONFIG.MMCM_BANDWIDTH {OPTIMIZED} \
-        CONFIG.MMCM_CLKFBOUT_MULT_F {3} \
-        CONFIG.MMCM_CLKIN1_PERIOD {10.000} \
-        CONFIG.MMCM_CLKIN2_PERIOD {10.000} \
-        CONFIG.MMCM_CLKOUT0_DIVIDE_F {9} \
-        CONFIG.MMCM_CLKOUT1_DIVIDE {3} \
         CONFIG.NUM_OUT_CLKS {2} \
-        CONFIG.MMCM_COMPENSATION {AUTO} \
-        CONFIG.MMCM_DIVCLK_DIVIDE {1} \
         CONFIG.OPTIMIZE_CLOCKING_STRUCTURE_EN {true} \
         CONFIG.PRIMITIVE {Auto} \
-        CONFIG.PRIM_IN_FREQ {100.000} \
         CONFIG.PRIM_SOURCE {Differential_clock_capable_pin} \
         CONFIG.RESET_BOARD_INTERFACE {system_resetn} \
         CONFIG.RESET_PORT {resetn} \
         CONFIG.RESET_TYPE {ACTIVE_LOW} \
-        CONFIG.USE_LOCKED {false} \
+        CONFIG.USE_LOCKED {true} \
         CONFIG.USE_RESET {true} \
     ] [get_bd_cells $ecs_clock_300_mhz]
 
@@ -359,10 +348,7 @@ proc build_all {} {
         set_property name system_resetn [get_bd_ports resetn_0]
         set_property -dict [list \
             CONFIG.CLKIN1_JITTER_PS {33.330000000000005} \
-            CONFIG.CLKOUT1_JITTER {143.207} \
             CONFIG.MMCM_CLKIN1_PERIOD {3.333} \
-            CONFIG.MMCM_CLKIN2_PERIOD {10.0} \
-            CONFIG.MMCM_DIVCLK_DIVIDE {3} \
             CONFIG.PRIM_IN_FREQ {300.000} \
         ] [get_bd_cells $ecs_clock_300_mhz]
     endgroup
@@ -449,6 +435,8 @@ proc build_all {} {
         CONFIG.DAC_DDS_TYPE {1} \
         CONFIG.DAC_DDS_CORDIC_DW {14} \
         CONFIG.ADC_INIT_DELAY {11} \
+        CONFIG.DELAY_REFCLK_FREQUENCY {300} \
+        CONFIG.TDD_DISABLE {1} \
     ] [get_bd_cells $axi_ad9361]
 
     # Create external ports for AD9361 LVDS interface
@@ -673,24 +661,24 @@ proc build_all {} {
     ###########################################################################
     # AXI-Lite to Streaming Adapter (HLS IP)
     # Bridges CPU AXI-Lite to the AD9361 adapter's AXI-Stream and ap_none
-    # control/status interfaces.  Runs in the 100 MHz AXI clock domain.
+    # control/status interfaces.  Runs in the 150 MHz AXI clock domain.
     ###########################################################################
 
     puts "INFO: Instantiating AXI-Lite to Streaming Adapter..."
 
     create_bd_cell -type ip -vlnv user:hls:axi_lite_to_streaming_adapter:1.0 $axi_streaming_adapter
 
-    # Connect adapter clock and reset (100 MHz AXI domain)
+    # Connect adapter clock and reset (150 MHz AXI domain)
     connect_bd_net [get_bd_pins $ecs_clock_300_mhz/clk_out1] [get_bd_pins $axi_streaming_adapter/ap_clk]
     connect_bd_net [get_bd_pins $cpu_sys_reset/peripheral_aresetn] [get_bd_pins $axi_streaming_adapter/ap_rst_n]
 
     ###########################################################################
-    # AXI-Stream CDC FIFOs (100 MHz <-> l_clk)
+    # AXI-Stream CDC FIFOs (150 MHz <-> l_clk)
     ###########################################################################
 
     puts "INFO: Instantiating AXI-Stream CDC FIFOs..."
 
-    # TX CDC FIFO: axi_streaming_adapter (100 MHz) -> ad9361_adapter (l_clk)
+    # TX CDC FIFO: axi_streaming_adapter (150 MHz) -> ad9361_adapter (l_clk)
     create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo:2.0 $ad9361_cdc_tx_streaming_fifo
     set_property -dict [list CONFIG.HAS_TLAST.VALUE_SRC USER] [get_bd_cells $ad9361_cdc_tx_streaming_fifo]
     set_property -dict [list \
@@ -708,7 +696,9 @@ proc build_all {} {
     connect_bd_intf_net [get_bd_intf_pins $axi_streaming_adapter/tx_stream]      [get_bd_intf_pins $ad9361_cdc_tx_streaming_fifo/S_AXIS]
     connect_bd_intf_net [get_bd_intf_pins $ad9361_cdc_tx_streaming_fifo/M_AXIS]  [get_bd_intf_pins $axi_ad9361_adapter/tx_stream]
 
-    # RX CDC FIFO: ad9361_adapter (l_clk) -> axi_streaming_adapter (100 MHz)
+    # RX CDC FIFO: ad9361_adapter (l_clk) -> axi_streaming_adapter (150 MHz)
+    # ap_clk (150 MHz) is intentionally faster than l_clk (max 125 MHz) so the
+    # RX FIFO drains faster than the AD9361 fills it — prevents overflow.
     create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo:2.0 $ad9361_cdc_rx_streaming_fifo
     set_property -dict [list CONFIG.HAS_TLAST.VALUE_SRC USER] [get_bd_cells $ad9361_cdc_rx_streaming_fifo]
     set_property -dict [list \
@@ -735,6 +725,7 @@ proc build_all {} {
     # Connect critical async resets and clocks
     connect_bd_net [get_bd_ports system_resetn] [get_bd_pins $cpu_sys_reset/ext_reset_in]
     connect_bd_net [get_bd_pins $ecs_clock_300_mhz/clk_out1] [get_bd_pins $cpu_sys_reset/slowest_sync_clk]
+    connect_bd_net [get_bd_pins $ecs_clock_300_mhz/locked] [get_bd_pins $cpu_sys_reset/dcm_locked]
     connect_bd_net [get_bd_pins $ecs_clock_300_mhz/clk_out1] [get_bd_pins $neorv32_cpu/clk]
     connect_bd_net [get_bd_pins $cpu_sys_reset/mb_reset] [get_bd_pins $neorv32_cpu_input_reset/Op1]
     connect_bd_net [get_bd_pins $neorv32_cpu_input_reset/Res] [get_bd_pins $neorv32_cpu/resetn]
