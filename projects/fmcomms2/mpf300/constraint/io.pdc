@@ -1,0 +1,90 @@
+###############################################################################
+## FMCOMMS2 on MPF300 Splash Kit - I/O constraints
+##
+## Sources:
+##   - PolarFire Splash schematic rev 4: page 8 (bank 4: UART/clock/reset),
+##     page 6 (bank 2: FMC LPC LA-to-ball map)
+##   - projects/fmcomms2/axau15/system_constr.xdc (FMCOMMS2 signal-to-LA
+##     assignment, standard ADI FMC pinout):
+##       rx_clk=LA00_CC rx_frame=LA01_CC rx_data[0..5]=LA02..LA07
+##       tx_clk=LA08 tx_frame=LA09
+##       tx_data[0..5]=LA11,LA12,LA13,LA10,LA14,LA15
+##       enable/txnrx=LA16_P/N  en_agc/sync=LA19_P/N
+##       gpio_status[0..7]=LA20..LA23  gpio_ctl[0..3]=LA24,LA25
+##       spi_csn/clk=LA26_P/N  spi_mosi/miso=LA27_P/N  gpio_resetb=LA28_P
+##
+## Bank 2 runs on VCCIO_LPC_VADJ: it must be strapped to 2.5 V for the
+## FMCOMMS2's LVDS interface (LVDS25 below). Bank 4/5 are 3.3 V.
+###############################################################################
+
+# board infrastructure (bank 4/5, 3.3 V)
+
+set_io -port_name {ref_clk_50mhz} -pin_name {H7} -fixed true -io_std {LVCMOS33}
+set_io -port_name {sys_uart_rx}   -pin_name {R5} -fixed true -io_std {LVCMOS33}
+set_io -port_name {sys_uart_tx}   -pin_name {R4} -fixed true -io_std {LVCMOS33}
+set_io -port_name {sys_resetn}    -pin_name {N4} -fixed true -io_std {LVCMOS33}
+
+# AD9361 LVDS receive (FMC LA00/LA01/LA02..LA07 -> bank 2)
+
+set_io -port_name {rx_clk_in_p}     -pin_name {A17} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_clk_in_n}     -pin_name {B17} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_frame_in_p}   -pin_name {G17} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_frame_in_n}   -pin_name {F17} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_p[0]} -pin_name {B12} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_n[0]} -pin_name {B13} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_p[1]} -pin_name {A12} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_n[1]} -pin_name {A13} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_p[2]} -pin_name {F15} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_n[2]} -pin_name {F16} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_p[3]} -pin_name {D16} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_n[3]} -pin_name {D17} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_p[4]} -pin_name {B9}  -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_n[4]} -pin_name {B10} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_p[5]} -pin_name {H15} -fixed true -io_std {LVDS25}
+set_io -port_name {rx_data_in_n[5]} -pin_name {G15} -fixed true -io_std {LVDS25}
+
+# AD9361 LVDS transmit (FMC LA08..LA15 -> bank 2)
+
+set_io -port_name {tx_clk_out_p}     -pin_name {C11} -fixed true -io_std {LVDS25}
+set_io -port_name {tx_clk_out_n}     -pin_name {C12} -fixed true -io_std {LVDS25}
+set_io -port_name {tx_frame_out_p}   -pin_name {B8}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_frame_out_n}   -pin_name {A8}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_p[0]} -pin_name {B2}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_n[0]} -pin_name {B3}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_p[1]} -pin_name {C5}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_n[1]} -pin_name {B5}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_p[2]} -pin_name {F13} -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_n[2]} -pin_name {F12} -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_p[3]} -pin_name {A6}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_n[3]} -pin_name {A7}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_p[4]} -pin_name {A2}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_n[4]} -pin_name {A3}  -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_p[5]} -pin_name {D14} -fixed true -io_std {LVDS25}
+set_io -port_name {tx_data_out_n[5]} -pin_name {E14} -fixed true -io_std {LVDS25}
+
+# ENSM / control / status (bank 2, single-ended on VADJ=2.5 V)
+
+set_io -port_name {enable}         -pin_name {C14} -fixed true -io_std {LVCMOS25}
+set_io -port_name {txnrx}          -pin_name {C15} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_en_agc}    -pin_name {G12} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_sync}      -pin_name {G13} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_resetb}    -pin_name {E3}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[0]} -pin_name {D11} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[1]} -pin_name {D12} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[2]} -pin_name {F10} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[3]} -pin_name {E10} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[4]} -pin_name {C9}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[5]} -pin_name {C10} -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[6]} -pin_name {C1}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_status[7]} -pin_name {B1}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_ctl[0]}    -pin_name {F3}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_ctl[1]}    -pin_name {E4}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_ctl[2]}    -pin_name {E9}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {gpio_ctl[3]}    -pin_name {D9}  -fixed true -io_std {LVCMOS25}
+
+# AD9361 SPI (bank 2)
+
+set_io -port_name {spi_csn_0} -pin_name {F5}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {spi_clk}   -pin_name {E5}  -fixed true -io_std {LVCMOS25}
+set_io -port_name {spi_mosi}  -pin_name {G14} -fixed true -io_std {LVCMOS25}
+set_io -port_name {spi_miso}  -pin_name {H13} -fixed true -io_std {LVCMOS25}

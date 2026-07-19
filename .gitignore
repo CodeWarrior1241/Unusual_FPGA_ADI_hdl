@@ -109,6 +109,8 @@ _build
 .github/PULL_REQUEST_TEMPLATE.md
 library/**/.lock
 library/**/interfaces/*.sv
+# Libero SoC generated project tree (build_all.tcl recreates it every run)
+projects/**/proj/
 .backstage_yaml
 bin/
 lib/
