@@ -1,0 +1,9 @@
+# Questa simulation artifacts
+work/
+polarfire/
+modelsim.ini
+*.wlf
+*.log
+*.vstf
+transcript
+qpsk_bram_data.hex
