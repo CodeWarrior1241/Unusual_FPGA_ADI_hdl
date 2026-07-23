@@ -5,9 +5,18 @@
 // datapath and the RX CDC FIFO, held while the system reset is asserted OR
 // software power-down is active.
 //
-// pwr_dn originates in the 125 MHz domain; it crosses into l_clk through a
-// 4-stage synchronizer here (the only project-authored CDC, same as
-// axau15).
+// Built from open-logic components (deps/open-logic, VHDL):
+//   - olo_base_cc_bits carries pwr_dn from the 125 MHz domain into l_clk
+//     (the only project-authored CDC, same as axau15). SyncStages_g=4
+//     keeps the 4-stage depth of the hand-rolled synchronizer this
+//     replaces.
+//   - olo_base_reset_gen filters (system reset | pwr_dn) into an l_clk
+//     synchronous reset with an 8-cycle minimum pulse, matching the
+//     8-stage shift register it replaces.
+//
+// The 125 MHz source clock is a new input (clk_125) — olo_base_cc_bits
+// registers the crossing signal in its source domain before the
+// synchronizer chain, which the hand-rolled 4-flop version did not.
 // ***************************************************************************
 
 `timescale 1ns/100ps
@@ -15,6 +24,7 @@
 module lclk_reset_sync (
 
   input           l_clk,
+  input           clk_125,          // pwr_dn source domain clock
   input           ext_resetn,       // sys_resetn from the 125 MHz domain
   input           pwr_dn,           // 125 MHz domain, synchronized here
 
@@ -22,23 +32,33 @@ module lclk_reset_sync (
   output          lclk_reset        // active high (SmartHLS adapter)
 );
 
-  reg [3:0] pwr_dn_sync = 4'h0;
-  reg [7:0] rst_shift = 8'h00;
+  wire [0:0] pwr_dn_in;
+  wire [0:0] pwr_dn_lclk;
 
-  always @(posedge l_clk) begin
-    pwr_dn_sync <= {pwr_dn_sync[2:0], pwr_dn};
-  end
+  assign pwr_dn_in = pwr_dn;
 
-  wire rst_src_n = ext_resetn & ~pwr_dn_sync[3];
+  olo_base_cc_bits #(
+    .Width_g      (1),
+    .SyncStages_g (4)
+  ) i_pwr_dn_cc (
+    .In_Clk   (clk_125),
+    .In_Rst   (1'b0),
+    .In_Data  (pwr_dn_in),
+    .Out_Clk  (l_clk),
+    .Out_Rst  (1'b0),
+    .Out_Data (pwr_dn_lclk)
+  );
 
-  always @(posedge l_clk or negedge rst_src_n) begin
-    if (!rst_src_n)
-      rst_shift <= 8'h00;
-    else
-      rst_shift <= {rst_shift[6:0], 1'b1};
-  end
+  wire rst_src = ~ext_resetn | pwr_dn_lclk[0];   // active high
 
-  assign lclk_resetn = rst_shift[7];
-  assign lclk_reset  = ~rst_shift[7];
+  olo_base_reset_gen #(
+    .RstPulseCycles_g (8)
+  ) i_reset_gen (
+    .Clk    (l_clk),
+    .RstIn  (rst_src),
+    .RstOut (lclk_reset)
+  );
+
+  assign lclk_resetn = ~lclk_reset;
 
 endmodule

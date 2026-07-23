@@ -83,6 +83,7 @@ begin
       RISCV_ISA_M       => true,
       RISCV_ISA_Zicntr  => true,
       CPU_FAST_MUL_EN   => true,
+      CPU_FAST_MUL_REG  => true,  -- pipeline the DSP multiplier: closes 125 MHz on PolarFire (see README)
       CPU_FAST_SHIFT_EN => true,
       IO_UART0_EN       => true,
       IO_UART0_RX_FIFO  => 32,
@@ -93,7 +94,12 @@ begin
       IO_SPI_EN         => true,
       IO_SPI_FIFO       => 4,
       XBUS_EN           => true,
-      XBUS_TIMEOUT      => 255,
+      -- 32768, not 255: the SmartHLS streaming adapter serves its single
+      -- pipeline's TX burst ahead of AXI beats, so a status READ issued
+      -- during SEND_AND_RECEIVE can legitimately stall for the burst
+      -- duration (~10 us at 125 MHz = ~1250 cycles). 255 turns that into
+      -- an XBUS load-access fault.
+      XBUS_TIMEOUT      => 32768,
       IO_CLINT_EN       => true
     )
     port map (

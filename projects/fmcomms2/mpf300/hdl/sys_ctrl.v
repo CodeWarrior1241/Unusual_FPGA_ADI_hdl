@@ -4,9 +4,13 @@
 // power-down gating logic (pwr_dn_inv / pwr_dn_aresetn_gate) and the GPIO
 // xlslice fan-out cells:
 //
-//   - reset generation: async assert / sync deassert from PLL lock,
-//     PF_INIT_MONITOR device init done, and the board's PF_USER_RESET
-//     push-button (active low)
+//   - reset generation: open-logic olo_base_reset_gen (deps/open-logic,
+//     VHDL) — synchronizer-filtered reset from PLL lock, PF_INIT_MONITOR
+//     device init done, and the board's PF_USER_RESET push-button (active
+//     low). RstPulseCycles_g=8 keeps the 8-cycle minimum pulse of the
+//     shift-register implementation this replaces; olo asserts synchronously
+//     (registers power up in reset via the PolarFire initialization flow,
+//     so an async assert path is not needed) and releases synchronously.
 //   - pwr_dn = gpio_o[8]: software low-power lever; aresetn_gated =
 //     sys_resetn & ~pwr_dn holds axi_ad9361's register domain and the TX
 //     CDC FIFO in reset while powered down (axau15 plan B.3)
@@ -42,19 +46,20 @@ module sys_ctrl (
   output          spi_csn_0
 );
 
-  wire rst_src_n = pll_lock & init_done & ext_resetn;
+  wire rst_src = ~(pll_lock & init_done & ext_resetn);   // active high
 
-  reg [7:0] rst_shift = 8'h00;
+  // open-logic reset generator (VHDL entity; generic defaults except the
+  // pulse length: RstInPolarity_g='1' so rst_src is taken active-high,
+  // SyncStages_g=2)
+  olo_base_reset_gen #(
+    .RstPulseCycles_g (8)
+  ) i_reset_gen (
+    .Clk    (clk),
+    .RstIn  (rst_src),
+    .RstOut (sys_reset)
+  );
 
-  always @(posedge clk or negedge rst_src_n) begin
-    if (!rst_src_n)
-      rst_shift <= 8'h00;
-    else
-      rst_shift <= {rst_shift[6:0], 1'b1};
-  end
-
-  assign sys_resetn = rst_shift[7];
-  assign sys_reset  = ~rst_shift[7];
+  assign sys_resetn = ~sys_reset;
 
   assign pwr_dn = gpio_o[8];
   assign aresetn_gated = sys_resetn & ~pwr_dn;

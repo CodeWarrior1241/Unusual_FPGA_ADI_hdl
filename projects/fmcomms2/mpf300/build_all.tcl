@@ -21,8 +21,16 @@
 #     CLOCK_FREQUENCY generic is set to 125 MHz so UART baud etc. are
 #     correct without software changes.
 #   - Vivado SmartConnect / BRAM controller / axis_data_fifo / proc_sys_reset
-#     are replaced by the plain-HDL blocks in ./hdl (axi_1to3_decoder,
-#     axi_bram_32k, axis_async_fifo, sys_ctrl, lclk_reset_sync, dac_hold).
+#     are replaced by the blocks in ./hdl, built on third-party open-source
+#     components in deps/:
+#       axi_1to3_decoder  -> PULP axi_lite_xbar        (deps/axi)
+#       axis_async_fifo   -> open-logic olo_base_fifo_async (deps/open-logic,
+#                            VHDL; 512x41 -> 2x LSRAM per FIFO, see the
+#                            BRAM-strip note in hdl/axis_async_fifo.v)
+#       sys_ctrl,
+#       lclk_reset_sync   -> open-logic olo_base_reset_gen / olo_base_cc_bits
+#                                                      (deps/open-logic, VHDL)
+#       axi_bram_32k, dac_hold, refclk_ibuf: project-local plain HDL
 #   - The generated Libero project lands in ./proj (rebuilt every run).
 #
 # IP vault: PF_CCC / PF_INIT_MONITOR are generated from the offline
@@ -138,13 +146,61 @@ variable pf_files {
 }
 
 variable helper_files {
-    axi_1to3_decoder.v
+    axi_1to3_decoder.sv
     axi_bram_32k.v
     axis_async_fifo.v
     sys_ctrl.v
     lclk_reset_sync.v
     dac_hold.v
     refclk_ibuf.v
+}
+
+# PULP platform components (deps/common_cells v1.39.0, deps/axi v0.39.10):
+# the AXI-Lite crossbar behind axi_1to3_decoder and the gray-code CDC FIFO
+# behind axis_async_fifo. SystemVerilog, compiled into library work.
+
+variable pulp_common_cells_files {
+    cf_math_pkg.sv
+    addr_decode_dync.sv
+    addr_decode.sv
+    spill_register_flushable.sv
+    spill_register.sv
+    fifo_v3.sv
+    lzc.sv
+    rr_arb_tree.sv
+    counter.sv
+    delta_counter.sv
+    stream_register.sv
+    sync.sv
+    binary_to_gray.sv
+    gray_to_binary.sv
+    cdc_fifo_gray.sv
+}
+
+variable pulp_axi_files {
+    axi_pkg.sv
+    axi_intf.sv
+    axi_lite_demux.sv
+    axi_lite_mux.sv
+    axi_lite_to_axi.sv
+    axi_err_slv.sv
+    axi_lite_xbar.sv
+}
+
+# open-logic components (deps/open-logic, VHDL): reset generation and the
+# pwr_dn bit synchronizer behind sys_ctrl / lclk_reset_sync.
+
+variable olo_files {
+    olo_base_pkg_attribute.vhd
+    olo_base_pkg_array.vhd
+    olo_base_pkg_math.vhd
+    olo_base_pkg_logic.vhd
+    olo_base_pkg_string.vhd
+    olo_base_cc_bits.vhd
+    olo_base_cc_reset.vhd
+    olo_base_ram_sdp.vhd
+    olo_base_reset_gen.vhd
+    olo_base_fifo_async.vhd
 }
 
 ###############################################################################
@@ -194,6 +250,7 @@ proc build_all {} {
     global axi_streaming_adapter cdc_tx_fifo cdc_rx_fifo
     global repo_root lib_dir ip_dir neorv32_home hls_ad9361_dir hls_stream_dir
     global common_files core_files pf_files helper_files
+    global pulp_common_cells_files pulp_axi_files olo_files
 
     puts ""
     puts "==============================================================================="
@@ -264,6 +321,11 @@ proc build_all {} {
         return -1
     }
 
+    # The PULP axi/common_cells sources are SystemVerilog (packages,
+    # parameter type, always_ff/always_comb); the project default of
+    # Verilog-2001 fails to parse them in Synplify.
+    project_settings -verilog_mode {SYSTEM_VERILOG}
+
     ###########################################################################
     # Source import
     ###########################################################################
@@ -281,6 +343,12 @@ proc build_all {} {
     }
     close $fl
 
+    # NEORV32 fast-multiplier pipeline register: deps/neorv32 now carries the
+    # CPU_FAST_MUL_REG generic (PR #1603 -- pipeline register on the DSP
+    # multiplier; a 33x33 multiply is a 3-deep 18x18 MACC cascade on PolarFire
+    # and the single upstream register left ~6.8 ns combinational, capping the
+    # CPU domain near 112 MHz). It is enabled via CPU_FAST_MUL_REG => true in
+    # hdl/neorv32_mpf300_top.vhd, so no local source override is needed.
     foreach f $neorv32_files {
         import_files -hdl_source $f
         add_file_to_library -library {neorv32} -file $proj_dir/hdl/[file tail $f]
@@ -325,6 +393,56 @@ proc build_all {} {
     }
     # (MEM_INIT_DIR synthesis define is set after set_root below;
     #  configure_tool needs a root module)
+
+    # PULP platform sources (SystemVerilog, library work).
+    #
+    # Amalgamated into ONE generated file, packages first: Libero's
+    # design-hierarchy-driven synthesis fileset silently drops files that
+    # contain only SV packages (nothing instantiates a package), so
+    # separately imported cf_math_pkg.sv / axi_pkg.sv never reach Synplify
+    # and every dependent file fails with unknown-package cascades.
+    # Keeping the packages in the same file as the modules that use them
+    # guarantees they are compiled, and in the right order.
+    puts "INFO: Importing PULP common_cells + axi (amalgamated)..."
+    set pulp_all $proj_dir/pulp_sources.sv
+    set fo [open $pulp_all w]
+    puts $fo "// Generated by build_all.tcl -- amalgamated PULP platform sources"
+    puts $fo "// (deps/common_cells v1.39.0, deps/axi v0.39.10). Do not edit;"
+    puts $fo "// edit the pulp_*_files lists in build_all.tcl instead."
+    foreach f $pulp_common_cells_files {
+        set fi [open $repo_root/deps/common_cells/src/$f r]
+        puts $fo "\n// ==== common_cells/src/$f ====\n"
+        puts $fo [read $fi]
+        close $fi
+    }
+    foreach f $pulp_axi_files {
+        set fi [open $repo_root/deps/axi/src/$f r]
+        puts $fo "\n// ==== axi/src/$f ====\n"
+        puts $fo [read $fi]
+        close $fi
+    }
+    close $fo
+    import_files -hdl_source $pulp_all
+
+    # The PULP sources reference `include "axi/*.svh" and
+    # `include "common_cells/*.svh". Stage both include trees next to the
+    # imported copies in proj/hdl: relative includes resolve against the
+    # including file's own directory in both the Libero hierarchy parser
+    # and Synplify.
+    file mkdir $proj_dir/hdl/axi
+    foreach f [glob $repo_root/deps/axi/include/axi/*.svh] {
+        file copy -force $f $proj_dir/hdl/axi/
+    }
+    file mkdir $proj_dir/hdl/common_cells
+    foreach f [glob $repo_root/deps/common_cells/include/common_cells/*.svh] {
+        file copy -force $f $proj_dir/hdl/common_cells/
+    }
+
+    # open-logic sources (VHDL, library work)
+    puts "INFO: Importing open-logic base components..."
+    foreach f $olo_files {
+        import_files -hdl_source $repo_root/deps/open-logic/src/base/vhdl/$f
+    }
 
     # project-local helper blocks
     puts "INFO: Importing helper HDL..."
@@ -394,7 +512,7 @@ proc build_all {} {
 
     # AXI fabric + BRAM
     sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {axi_1to3_decoder} \
-        -hdl_file {hdl/axi_1to3_decoder.v} -instance_name $axi_cpu_interconnect
+        -hdl_file {hdl/axi_1to3_decoder.sv} -instance_name $axi_cpu_interconnect
     sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {axi_bram_32k} \
         -hdl_file {hdl/axi_bram_32k.v} -instance_name $qpsk_snapshot_bram
 
@@ -473,7 +591,7 @@ proc build_all {} {
               "$axi_cpu_interconnect:aclk" "$qpsk_snapshot_bram:aclk" \
               "$axi_streaming_adapter:clk" "$cdc_tx_fifo:s_axis_aclk" \
               "$cdc_rx_fifo:m_axis_aclk" "$axi_ad9361:s_axi_aclk" \
-              "$axi_ad9361:delay_clk"] \
+              "$axi_ad9361:delay_clk" "$lclk_rst:clk_125"] \
         [list "$clk_gen:PLL_LOCK_0" "$sys_ctrl_i:pll_lock"] \
         [list "$init_monitor:DEVICE_INIT_DONE" "$sys_ctrl_i:init_done"] \
         [list "$sys_ctrl_i:sys_resetn" "$neorv32_cpu:resetn" \
@@ -642,8 +760,20 @@ proc build_all {} {
     # 1, which builds the 128 KB NEORV32 IMEM out of ~65k 4LUTs and caps the
     # CPU domain near 69 MHz; LSRAM contents are loaded at power-up by the
     # design-initialization flow via PF_INIT_MONITOR)
+    # -include_path: the PULP `include trees are also staged in proj/hdl
+    # (see source import), the explicit paths are belt-and-suspenders
+    # -retiming: lets Synplify move the single NEORV32 fast-mul product
+    # register into the 3-deep MACC cascade (33x33 -> 3x 18x18 WideMult);
+    # without it the register sits at the head of the cascade and the
+    # MACC->regfile writeback path misses 125 MHz by ~1.1 ns
     configure_tool -name {SYNTHESIZE} \
-        -params "SYNPLIFY_OPTIONS:set_option -hdl_define -set MEM_INIT_DIR=\"$proj_dir/mem_init/\"; set_option -rom_map_logic 0"
+        -params "SYNPLIFY_OPTIONS:set_option -hdl_define -set MEM_INIT_DIR=\"$proj_dir/mem_init/\"; set_option -rom_map_logic 0; set_option -retiming 1; set_option -include_path \"$repo_root/deps/axi/include;$repo_root/deps/common_cells/include\""
+
+    # high-effort timing-driven P&R (default effort left ~1.1 ns on the
+    # MACC->regfile path; most of that is in-macro delay, this buys the rest)
+    configure_tool -name {PLACEROUTE} \
+        -params {EFFORT_LEVEL:true} \
+        -params {REPAIR_MIN_DELAY:true}
 
     organize_tool_files -tool {SYNTHESIZE} \
         -file $proj_dir/constraint/system.sdc \
@@ -691,6 +821,36 @@ proc build_all {} {
     } else {
         puts "MPF300_FMCOMMS2_TIMING_ANALYZED (check reports for slack)"
     }
+
+    ###########################################################################
+    # Bitstream generation (PolarFire G5 programming flow)
+    #   GENERATEPROGRAMMINGDATA  - "Generate FPGA Array Data"
+    #   GENERATE_INIT_DATA       - "Generate Design Initialization Data":
+    #                              the NEORV32 IMEM (ad9361_no-os image) and the
+    #                              other LSRAM contents are loaded at power-up via
+    #                              PF_INIT_MONITOR, so the RAM-init data must be
+    #                              baked into the bitstream.
+    #   GENERATEPROGRAMMINGFILE  - "Generate Bitstream"
+    ###########################################################################
+
+    puts "INFO: Generating FPGA array (programming) data..."
+    if {[catch {run_tool -name {GENERATEPROGRAMMINGDATA}} result]} {
+        puts "ERROR: GENERATEPROGRAMMINGDATA failed: $result"
+        return -1
+    }
+
+    puts "INFO: Generating design initialization data (RAM/IMEM init)..."
+    if {[catch {run_tool -name {GENERATE_INIT_DATA}} result]} {
+        puts "ERROR: GENERATE_INIT_DATA failed: $result"
+        return -1
+    }
+
+    puts "INFO: Generating bitstream..."
+    if {[catch {run_tool -name {GENERATEPROGRAMMINGFILE}} result]} {
+        puts "ERROR: GENERATEPROGRAMMINGFILE (bitstream) failed: $result"
+        return -1
+    }
+    puts "MPF300_FMCOMMS2_BITSTREAM_OK"
 
     puts ""
     puts "==============================================================================="
