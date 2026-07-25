@@ -27,6 +27,7 @@ module sys_ctrl (
   input           clk,              // 125 MHz
   input           pll_lock,
   input           init_done,        // PF_INIT_MONITOR DEVICE_INIT_DONE
+  input           sram_init_done,   // PF_INIT_MONITOR SRAM_INIT_DONE (LSRAM loaded)
   input           ext_resetn,       // PF_USER_RESET push-button, active low
 
   input   [15:0]  gpio_o,
@@ -46,7 +47,13 @@ module sys_ctrl (
   output          spi_csn_0
 );
 
-  wire rst_src = ~(pll_lock & init_done & ext_resetn);   // active high
+  // sram_init_done is the LSRAM-stage init flag; the IMEM firmware image
+  // lives in power-up-initialized LSRAM, so the CPU must not fetch before
+  // it asserts. DEVICE_INIT_DONE (init_done) asserts after all init stages
+  // including this one, so the extra term is belt-and-braces — kept
+  // explicit so the IMEM dependency survives any future change to what
+  // init_done gates on.
+  wire rst_src = ~(pll_lock & init_done & sram_init_done & ext_resetn);   // active high
 
   // open-logic reset generator (VHDL entity; generic defaults except the
   // pulse length: RstInPolarity_g='1' so rst_src is taken active-high,

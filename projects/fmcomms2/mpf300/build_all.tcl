@@ -349,10 +349,22 @@ proc build_all {} {
     # and the single upstream register left ~6.8 ns combinational, capping the
     # CPU domain near 112 MHz). It is enabled via CPU_FAST_MUL_REG => true in
     # hdl/neorv32_mpf300_top.vhd, so no local source override is needed.
+    # neorv32_imem_rom.vhd is replaced by an mpf300-only wrapper (see below);
+    # skip the mainline copy so the override is the only one in the project
     foreach f $neorv32_files {
+        if {[file tail $f] eq "neorv32_imem_rom.vhd"} { continue }
         import_files -hdl_source $f
         add_file_to_library -library {neorv32} -file $proj_dir/hdl/[file tail $f]
     }
+
+    # mpf300-only IMEM ROM wrapper: identical entity/behavior, but the memory is
+    # a signal pinned with syn_romstyle="lsram". The mainline package-constant
+    # read maps to a ~57k-LUT mux tree inside Synplify's automatic-compile-point
+    # context jobs, which -retiming then grinds on for 30+ minutes before the
+    # netlist is discarded; the attribute makes every mapping context extract
+    # RAM1K20 blocks up front (synthesis drops from ~2 h to minutes).
+    import_files -hdl_source $project_dir/hdl/neorv32_imem_rom.vhd
+    add_file_to_library -library {neorv32} -file $proj_dir/hdl/neorv32_imem_rom.vhd
 
     # integration shell + XBUS-to-AXI4 bridge (library work), plus this
     # project's configuration wrapper (HDL+ cannot set VHDL boolean
@@ -594,6 +606,7 @@ proc build_all {} {
               "$axi_ad9361:delay_clk" "$lclk_rst:clk_125"] \
         [list "$clk_gen:PLL_LOCK_0" "$sys_ctrl_i:pll_lock"] \
         [list "$init_monitor:DEVICE_INIT_DONE" "$sys_ctrl_i:init_done"] \
+        [list "$init_monitor:SRAM_INIT_DONE" "$sys_ctrl_i:sram_init_done"] \
         [list "$sys_ctrl_i:sys_resetn" "$neorv32_cpu:resetn" \
               "$axi_cpu_interconnect:aresetn" "$qpsk_snapshot_bram:aresetn" \
               "$cdc_rx_fifo:m_axis_aresetn" "$lclk_rst:ext_resetn"] \
@@ -766,8 +779,17 @@ proc build_all {} {
     # register into the 3-deep MACC cascade (33x33 -> 3x 18x18 WideMult);
     # without it the register sits at the head of the cascade and the
     # MACC->regfile writeback path misses 125 MHz by ~1.1 ns
+    # -report_path 200: the Libero default of 4000 reported paths adds
+    # per-optimization-pass overhead in the mapper for no analysis value
+    # -automatic_compile_point 0: the Libero-default multiprocessing flow carves
+    # the NEORV32 into compile points and re-maps the enclosing top view inside
+    # a compile-point context job where ROM->LSRAM extraction (and the
+    # syn_romstyle attribute) is ignored -- that job rebuilds the IMEM as a
+    # ~57k-LUT mux tree and retimes it for 30+ minutes, then its netlist loses
+    # to the real top-level mapping anyway. A single mapper job maps the whole
+    # design (IMEM in RAM1K20s) in well under a minute.
     configure_tool -name {SYNTHESIZE} \
-        -params "SYNPLIFY_OPTIONS:set_option -hdl_define -set MEM_INIT_DIR=\"$proj_dir/mem_init/\"; set_option -rom_map_logic 0; set_option -retiming 1; set_option -include_path \"$repo_root/deps/axi/include;$repo_root/deps/common_cells/include\""
+        -params "SYNPLIFY_OPTIONS:set_option -hdl_define -set MEM_INIT_DIR=\"$proj_dir/mem_init/\"; set_option -rom_map_logic 0; set_option -retiming 1; set_option -report_path 200; set_option -automatic_compile_point 0; set_option -include_path \"$repo_root/deps/axi/include;$repo_root/deps/common_cells/include\""
 
     # high-effort timing-driven P&R (default effort left ~1.1 ns on the
     # MACC->regfile path; most of that is in-macro delay, this buys the rest)
@@ -839,9 +861,68 @@ proc build_all {} {
         return -1
     }
 
-    puts "INFO: Generating design initialization data (RAM/IMEM init)..."
+    # First pass generates designer/Top/Top_RAM.cfg (per-RAM init client
+    # config, everything defaulted to sNVM). The content-bearing clients (the
+    # NEORV32 IMEM image + SmartHLS adapter buffers, ~119 KB of data -> 263 KB
+    # client) exceed the 54 KB sNVM and the MPF300 uPROM, so those clients
+    # must live in the external SPI flash; the tool only reports the overflow
+    # later, at bitstream generation. Retarget them and regenerate.
+    puts "INFO: Generating design initialization data (first pass, writes RAM cfg)..."
     if {[catch {run_tool -name {GENERATE_INIT_DATA}} result]} {
         puts "ERROR: GENERATE_INIT_DATA failed: $result"
+        return -1
+    }
+
+    set ram_cfg "$proj_dir/designer/Top/Top_RAM.cfg"
+    set spi_cfg "$proj_dir/designer/Top/Top_RAM_spiflash.cfg"
+    if {![file exists $ram_cfg]} {
+        puts "ERROR: $ram_cfg not found; cannot retarget RAM init clients to SPI flash"
+        return -1
+    }
+    set in  [open $ram_cfg r]
+    set out [open $spi_cfg w]
+    set block ""
+    while {[gets $in line] >= 0} {
+        if {[string match "set_client*" $line]} {
+            if {$block ne ""} {
+                if {[string first "INFERRED_INITIALIZED" $block] >= 0} {
+                    regsub -all {storage_type \{SNVM\}} $block {storage_type {SPIFLASH}} block
+                }
+                puts -nonewline $out $block
+            }
+            set block "$line\n"
+        } elseif {$block ne ""} {
+            append block "$line\n"
+        }
+    }
+    if {$block ne ""} {
+        if {[string first "INFERRED_INITIALIZED" $block] >= 0} {
+            regsub -all {storage_type \{SNVM\}} $block {storage_type {SPIFLASH}} block
+        }
+        puts -nonewline $out $block
+    }
+    close $in
+    close $out
+
+    puts "INFO: Retargeting initialized RAM clients to SPI flash..."
+    if {[catch {configure_ram -cfg_file $spi_cfg} result]} {
+        puts "ERROR: configure_ram failed: $result"
+        return -1
+    }
+    # SPI client at 0x400, plaintext, divider 2 (40 MHz System Controller SPI)
+    if {[catch {configure_design_initialization_data \
+            -second_stage_start_address {0x00000000} \
+            -third_stage_spi_start_address {0x00000400} \
+            -third_stage_spi_type {SPIFLASH_NO_BINDING_PLAINTEXT} \
+            -third_stage_spi_clock_divider {2} \
+            -init_timeout {128} \
+            -broadcast_RAMs {0}} result]} {
+        puts "WARNING: configure_design_initialization_data: $result"
+    }
+
+    puts "INFO: Regenerating design initialization data (SPI-flash placement)..."
+    if {[catch {run_tool -name {GENERATE_INIT_DATA}} result]} {
+        puts "ERROR: GENERATE_INIT_DATA (SPI-flash placement) failed: $result"
         return -1
     }
 
