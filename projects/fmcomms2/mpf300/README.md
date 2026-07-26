@@ -20,6 +20,99 @@ PF_CCC / PF_INIT_MONITOR from the offline MegaVault, builds the
 SmartDesign, then runs synthesis (`MPF300_FMCOMMS2_SYNTH_OK`) and place &
 route (`MPF300_FMCOMMS2_PNR_OK`).
 
+## Libero installation and launcher (Ubuntu 24.04)
+
+Ubuntu 24.04 is not an officially supported Libero host; this section
+records exactly what was done to make Libero SoC 2025.2 work on it. A
+reference copy of the launcher lives in `./libero_configuration/`.
+
+### Installing Libero SoC 2025.2
+
+1. Download the offline installer (`Libero_SoC_2025.2_offline_lin.sh`)
+   from Microchip and run it with root privileges:
+
+   ```sh
+   sudo ./Libero_SoC_2025.2_offline_lin.sh
+   ```
+
+   Install path used here: `/media/fpgadev/Dev_Tools/Microchip`.
+   Components installed (see `LiberoConfig.txt` in the install root):
+   Libero SoC 2025.2, SmartHLS 2025.2, Standalone Program Debug,
+   **MegaVault 2025.2** (required — this machine has no route to the
+   online IP repository; `build_all.tcl` generates PF_CCC /
+   PF_INIT_MONITOR from the offline vault), Synplify Pro
+   W-2025.03M-SP1-1, ModelSim/QuestaSim ME 2024.3.
+
+2. 32-bit libraries. The FlashPro programming tools that run during
+   bitstream generation (`Designer/binfp/`: `fpbitgen_bin`,
+   `jobmgr_bin`, ...) are 32-bit executables. Everything they need comes
+   from the Ubuntu archive — nothing is copied by hand:
+
+   ```sh
+   sudo dpkg --add-architecture i386
+   sudo apt update
+   # core 32-bit runtime for the FlashPro tools
+   sudo apt-get install -y --no-install-recommends \
+       libc6:i386 libstdc++6:i386 zlib1g:i386 libfreetype6:i386 \
+       libfontconfig1:i386 libx11-6:i386 libxau6:i386 libxdmcp6:i386 \
+       libxext6:i386 libxft2:i386 libxrender1:i386 libxtst6:i386 \
+       libxi6:i386 libxfixes3:i386 libsm6:i386 libice6:i386 \
+       libncurses6:i386
+   # GUI-side extras (GTK2 file dialogs, sound module, CJK fonts, ksh)
+   sudo apt install -y libglapi-mesa:i386 libglib2.0-0t64:i386 \
+       libxcb-dri2-0:i386 libgtk2.0-0t64:i386 \
+       libcanberra-gtk-module:i386 libflac12t64 libglapi-mesa \
+       xfonts-intl-asian xfonts-intl-chinese xfonts-intl-chinese-big \
+       xfonts-intl-japanese xfonts-intl-japanese-big ksh
+   ```
+
+   At runtime the 32-bit tools resolve only `libc/libm/libpthread/
+   libdl/librt/libz` from `/lib/i386-linux-gnu` plus Libero's own
+   bundled 32-bit libraries (`Designer/libfp`), so no manual library
+   copies are needed — which is why `libero_configuration/` carries no
+   `.so` backups, only the launcher: nothing is hand-copied into system
+   or install directories, and a fresh machine is reproduced entirely by
+   the installer + the apt commands above + the launcher.
+
+3. License. A FlexLM server runs locally from the 64-bit daemons the
+   installer places in `<install>/LicenseDaemons` (`lmgrd`, `actlmgrd`,
+   `snpslmd`, `saltd`):
+
+   ```sh
+   cd /media/fpgadev/Dev_Tools/Microchip/LicenseDaemons
+   ./lmgrd -c /media/fpgadev/Dev_Tools/Microchip/Libero_License_active.dat \
+           -l /media/fpgadev/Dev_Tools/Microchip/license_daemon.log
+   ```
+
+   The license file's SERVER line uses port **1702**, which is what the
+   launcher exports (`1702@localhost`).
+
+### Configuring `run_libero.sh`
+
+The launcher (installed copy: `/media/fpgadev/Dev_Tools/Microchip/
+run_libero.sh`, reference copy: `./libero_configuration/run_libero.sh`)
+lives outside the repositories on the host — on a new machine, copy the
+reference copy next to the Libero install and edit it there. It does
+exactly two things beyond exec'ing Libero; both may need editing:
+
+1. `LM_LICENSE_FILE=1702@localhost` — point at your FlexLM server
+   (`port@host` from the SERVER line of your license file).
+2. `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6` — **required
+   on Ubuntu 24.04**. Libero links the system `libxml2`, which pulls the
+   system `libicuuc.so.74`, which requires `GLIBCXX_3.4.30`; Libero's
+   bundled RHEL `libstdc++` (max `GLIBCXX_3.4.28`) is too old, so
+   without the preload `libero_bin` fails at startup. Side effect: every
+   32-bit child tool prints `ERROR: ld.so: object '...libstdc++.so.6'
+   ... wrong ELF class: ELFCLASS64: ignored` — this is harmless noise
+   (a 32-bit process skipping a 64-bit preload), not a failure. On a
+   supported RHEL host neither line 2 nor the noise applies.
+
+Usage (headless):
+
+```sh
+run_libero.sh SCRIPT:/abs/path/build_all.tcl LOGFILE:/abs/path/build_all.log
+```
+
 ## System
 
 | axau15 (Vivado) | mpf300 (Libero) |
@@ -56,6 +149,90 @@ en_agc, bits7:5 ctl, bit8 pwr_dn), SPI CS bit 0, UART0 console at 115200.
   axau15 XDC joined with the Splash schematic page-6 LA-to-ball table —
   LVDS pairs on LA00..LA15, ENSM/ctl/status/SPI on LA16..LA28
 
+## Deploying to the Splash Kit
+
+### Jumper configuration (set with board powered OFF)
+
+Only **one** jumper leaves its factory default — the FMC VADJ selector
+(references: UG0786 Table 3, board schematics in
+`doc/MPF300-Splash-Kit/`):
+
+| Jumper | Setting | Why |
+|---|---|---|
+| **J32** | **pins 3-4 closed** (change from default 1-2) | Sets `VCCIO_LPC_VADJ` to **2.5 V**. Default is 3.3 V, which is wrong for this design *and* for the FMCOMMS2. |
+| J5-J9 | default (PolarFire JTAG path) | Routes the FTDI to the PolarFire's JTAG; UG0786 says "always retain the default." |
+| J11 | default (1-2 closed) | Program via the on-board FTDI over USB. Open only to use an external FlashPro5. |
+| J10 | default (open) | Open = normal JTAG programming. (Closed is SPI-master self-programming *of the FPGA from flash* — a different feature, not used here.) |
+| J3 | default (open, 1.0 V core) | Standard core voltage. |
+| J4 | default (1-2 closed) | Power via slide switch SW1. |
+
+### FMC power verification (before the FMCOMMS2 touches the board)
+
+The J17 FMC LPC connector receives three supplies from the carrier:
+**`VCCIO_LPC_VADJ`** (the FMC VADJ pins, from the 5 A U27 regulator,
+J32-selected), **12P0V**, and **3P3V**. VADJ must be 2.5 V for two
+independent reasons: the FMCOMMS2's AD9361 interface expects VADJ = 2.5 V
+in LVDS mode, and this design's `constraint/io.pdc` constrains every
+AD9361 pin on bank 2 as `LVDS25`, which requires 2.5 V VCCIO on that
+bank — at 3.3 V the I/O standard is electrically invalid on both sides
+of the connector.
+
+Procedure: set J32 -> power up the bare board (12 V/5 A adapter, SW1) ->
+DMM-verify the VADJ rail at 2.5 V (VADJ pins/decoupling at J17; sanity-
+check 12P0V and 3P3V) -> power down -> seat the FMCOMMS2 -> power up.
+Never hot-plug the FMC.
+
+### Two memories, two programming paths
+
+The deployed design lives in **two physical memories**, written by
+different mechanisms over the same USB cable:
+
+- **Fabric + sNVM** (logic configuration + the 504-byte stage-1 init
+  client): programmed over **JTAG** through the on-board FTDI — "the
+  bitstream" in the classic sense.
+- **SPI flash** (1 Gb Micron MT25QL01GB on the System Controller's
+  dedicated SC-SPI, bank 3): holds the **stage-3 init client at offset
+  0x400** — the ~263 KB instruction stream carrying the NEORV32
+  `ad9361_no-os` firmware image and the SmartHLS buffer contents. The
+  firmware (107 KB) physically cannot live on-die: sNVM is ~54 KB and
+  the MPF300 uPROM is smaller still. There is no separate flash
+  programmer: the JTAG session hands the image to the **System
+  Controller, which writes the flash itself** through SC-SPI.
+
+Consequence: **firmware-only iterations do not touch the fabric** —
+rebuild the no-os image, re-run `build_all.tcl`, reprogram only the SPI
+flash. On power-up the device runs I/O calibration (stage 1, sNVM), then
+streams the LSRAM contents from flash (~60-80 ms at 40 MHz);
+`SRAM_INIT_DONE` gates `sys_ctrl`'s `sys_resetn`, so the CPU cannot
+fetch before the firmware is physically loaded.
+
+### Files and programming sequence
+
+`build_all.tcl` ends by exporting deployment artifacts to `proj/export/`
+(`MPF300_FMCOMMS2_EXPORT_OK`):
+
+| File | Type | Role |
+|---|---|---|
+| `fmcomms2_mpf300.job` | FlashPro Express job | fabric + sNVM bitstream; also bundles the SPI-flash image once `cfg/spiflash.cfg` is captured (see below) |
+| `fmcomms2_mpf300_spi.bin` | SPI-flash image (MT25QL01GB) | standalone flash contents (only exported once `cfg/spiflash.cfg` is captured) |
+| `proj/designer/Top/Top.ppd` | programming database | Libero-internal; source for direct programming and the exports |
+
+Sequence:
+
+1. Jumpers as above, FMCOMMS2 seated, 12 V adapter, mini-USB to host,
+   SW1 on.
+2. Program fabric + sNVM: `program_board.tcl` step 1 (`PROGRAM_DEVICE`),
+   or FlashPro Express with the exported `.job`.
+3. Program the SPI flash: `program_board.tcl` step 2
+   (`PROGRAM_SPI_FLASH_IMAGE`). The SPI Flash memory map comes from
+   `cfg/spiflash.cfg` (ships in the repo, applied by `build_all.tcl`);
+   its 256-byte STATIC_FILL placeholder client works around a Libero
+   2025.2 batch-mode segfault — details in the `program_board.tcl`
+   header.
+4. Power-cycle (a clean init run needs it). Boot takes the three-stage
+   init described above, then the no-os console appears on the FTDI UART
+   (115200).
+
 ## Status / timing (2026-07-19, Libero 2025.2, PULP/open-logic components)
 
 **Timing is met at 125 MHz** — `Info: Timing constraints have been met`,
@@ -72,8 +249,12 @@ also bought back ~0.4 ns on the CPU domain. Post-layout multi-corner:
 | `clk_125mhz` (NEORV32/AXI domain) | 125 MHz | **+1.14 ns** | yes |
 | hold, all clocks, all corners | - | +0.012 ns worst | yes |
 
-24.1k logic elements (8% of MPF300); synthesis ~1 h 50 min (Synplify
-retiming is enabled), place & route ~3 min, routing ~1.5 min.
+24.1k logic elements (8% of MPF300); synthesis ~2.5 min (was ~1 h 50 min
+before the mpf300-only `hdl/neorv32_imem_rom.vhd` LSRAM wrapper and
+`-automatic_compile_point 0` — Synplify's compile-point flow re-mapped
+the IMEM ROM as a ~66k-LUT mux tree and retimed it for the better part
+of two hours before discarding the result), place & route ~6 min; full
+build through bitstream + export ~15 min.
 
 ### How the CPU domain got from 69 MHz to 125 MHz
 

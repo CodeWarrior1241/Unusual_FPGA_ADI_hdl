@@ -920,6 +920,27 @@ proc build_all {} {
         puts "WARNING: configure_design_initialization_data: $result"
     }
 
+    # SPI Flash memory-map configuration (cfg/spiflash.cfg, ships in repo):
+    # memory size 131072 KiB (1 Gb MT25QL01GB) plus one 256-byte STATIC_FILL
+    # placeholder client at 0x100000. The placeholder works around a Libero
+    # 2025.2 batch-mode bug: with zero user clients in the SPI Flash map,
+    # isSpiFlashConfiguredAndValid() (libitlfpro.so) raises the "There are
+    # no SPI Flash clients selected for programming" dialog via
+    # App::GetMainFrameWidget(), which is NULL in batch mode -> SIGSEGV in
+    # GENERATE_SPI_FLASH_IMAGE and in the bitstream generator's internal
+    # SPI-image invocation. STATIC_FILL writes the flash's erased state, so
+    # the placeholder is electrically a no-op. If cfg/spiflash.cfg is
+    # missing, the SPI-flash image steps are skipped (fabric+sNVM job only).
+    set spiflash_cfg "$project_dir/cfg/spiflash.cfg"
+    set have_spiflash_cfg [file exists $spiflash_cfg]
+    if {$have_spiflash_cfg} {
+        puts "INFO: Applying SPI Flash memory configuration..."
+        if {[catch {configure_spiflash -cfg_file $spiflash_cfg} result]} {
+            puts "WARNING: configure_spiflash failed: $result"
+            set have_spiflash_cfg 0
+        }
+    }
+
     puts "INFO: Regenerating design initialization data (SPI-flash placement)..."
     if {[catch {run_tool -name {GENERATE_INIT_DATA}} result]} {
         puts "ERROR: GENERATE_INIT_DATA (SPI-flash placement) failed: $result"
@@ -932,6 +953,70 @@ proc build_all {} {
         return -1
     }
     puts "MPF300_FMCOMMS2_BITSTREAM_OK"
+
+    ###########################################################################
+    # Export deployment artifacts (see program_board.tcl for programming)
+    #   <export>/fmcomms2_mpf300.job     - FlashPro Express job: fabric + sNVM
+    #                                      bitstream AND the SPI-flash image
+    #                                      (stage-3 RAM-init client with the
+    #                                      NEORV32 firmware) in one bundle
+    #   <export>/fmcomms2_mpf300_spi.bin - standalone SPI-flash image
+    #                                      (MT25QL01GB, the Splash Kit flash)
+    ###########################################################################
+
+    set export_dir "$proj_dir/export"
+    file mkdir $export_dir
+
+    if {$have_spiflash_cfg} {
+        # Full deployment bundle: SPI flash image + job with both memories
+        puts "INFO: Generating SPI flash image..."
+        if {[catch {run_tool -name {GENERATE_SPI_FLASH_IMAGE}} result]} {
+            puts "ERROR: GENERATE_SPI_FLASH_IMAGE failed: $result"
+            return -1
+        }
+
+        puts "INFO: Exporting FlashPro Express programming job (fabric+sNVM+SPI)..."
+        if {[catch {export_prog_job \
+                -job_file_name {fmcomms2_mpf300} \
+                -export_dir $export_dir \
+                -bitstream_file_type {TRUSTED_FACILITY} \
+                -bitstream_file_components {FABRIC SNVM} \
+                -design_bitstream_format {PPD} \
+                -program_design 1 \
+                -program_spi_flash 1} result]} {
+            puts "ERROR: export_prog_job failed: $result"
+            return -1
+        }
+
+        # (-spiflash_device is not accepted for BIN-format exports)
+        puts "INFO: Exporting standalone SPI flash image..."
+        if {[catch {export_spiflash_image \
+                -file_name {fmcomms2_mpf300_spi} \
+                -export_dir $export_dir \
+                -format {BIN}} result]} {
+            puts "ERROR: export_spiflash_image failed: $result"
+            return -1
+        }
+    } else {
+        puts "INFO: No cfg/spiflash.cfg captured yet -- exporting fabric+sNVM job only."
+        puts "INFO: SPI-flash image generation needs the one-time GUI configuration"
+        puts "INFO: (see comment above the configure_spiflash call in this script)."
+        puts "INFO: Exporting FlashPro Express programming job (fabric+sNVM)..."
+        if {[catch {export_prog_job \
+                -job_file_name {fmcomms2_mpf300} \
+                -export_dir $export_dir \
+                -bitstream_file_type {TRUSTED_FACILITY} \
+                -bitstream_file_components {FABRIC SNVM} \
+                -design_bitstream_format {PPD} \
+                -program_design 1 \
+                -program_spi_flash 0} result]} {
+            puts "ERROR: export_prog_job failed: $result"
+            return -1
+        }
+    }
+
+    puts "  Export dir: $export_dir"
+    puts "MPF300_FMCOMMS2_EXPORT_OK"
 
     puts ""
     puts "==============================================================================="
