@@ -3,7 +3,7 @@
 ###############################################################################
 #
 # Programs BOTH memories of the deployed design over the one USB cable:
-#   1. PROGRAM_DEVICE          - fabric + sNVM (the bitstream: logic config
+#   1. PROGRAMDEVICE           - fabric + sNVM (the bitstream: logic config
 #                                and the 504-byte stage-1 init client)
 #   2. PROGRAM_SPI_FLASH_IMAGE - the 1 Gb Micron MT25QL01GB SPI flash on the
 #                                System Controller SPI (stage-3 RAM-init
@@ -29,12 +29,19 @@
 #     generated (run build_all.tcl first; look for MPF300_FMCOMMS2_EXPORT_OK).
 #   - Board: MPF300-SPLASH-KIT on 12 V/5 A supply, powered ON (SW1), mini-USB
 #     connected to this host (on-board FTDI; J11 default 1-2 closed, J5-J9
-#     default, J10 open). Jumper J32 pins 3-4 (VADJ = 2.5 V) for FMCOMMS2.
+#     default). Jumper J32 pins 3-4 (VADJ = 2.5 V) for FMCOMMS2.
+#   - Jumper J10 pins 1-2 CLOSED (NOT the factory default): J10 selects the
+#     mux (U71) between the SPI flash and either the FTDI or the PolarFire
+#     SC_SPI. Step 2 fails with "SPI - Flash is not connected or not
+#     supported" when J10 is open, and power-up init from flash needs it
+#     closed permanently.
 #   - The FTDI JTAG programmer must be visible to Libero (FlashPro drivers /
 #     udev rules installed; check with Libero's programmer self-test or
 #     'lsusb | grep -i future' for the FT4232 device).
-#   - Die is MPF300TS_ES (engineering sample): if the programmer rejects the
-#     device ID, enable ES-silicon support in the programmer settings.
+#   - Die is MPF300T (production, MPF300T-1FCG484E per the kit QuickStart;
+#     covered by the Silver license) -- a bitstream built for the
+#     MPF300TS_ES eval die is rejected by the scan-chain check with
+#     "Found: MPF300(T|TS|...), Expected: MPF300TS_ES".
 #
 # Firmware-only update: after rebuilding the no-os image and re-running
 # build_all.tcl, only step 2 (SPI flash) is needed -- the fabric bitstream
@@ -59,18 +66,28 @@
 
 open_project -file {/media/fpgadev/Dev_Tools/Work/QPSK_Triple_Comparison/deps/hdl/projects/fmcomms2/mpf300/proj/fmcomms2_mpf300.prjx}
 
+# Set to 1 to skip step 1 (fabric + sNVM) and program only the SPI flash --
+# the firmware-only update path. The fabric has a ~1000-programming-cycle
+# lifetime (PolarFire DS Table 5-67); skip it whenever the design on the
+# device already matches (compare the printed bitstream digests).
+set SKIP_FABRIC 0
+
 ###############################################################################
 # Step 1: fabric + sNVM over JTAG
 ###############################################################################
 
+if {!$SKIP_FABRIC} {
 puts "INFO: Programming fabric + sNVM (JTAG)..."
-if {[catch {run_tool -name {PROGRAM_DEVICE}} result]} {
-    puts "ERROR: PROGRAM_DEVICE failed: $result"
+if {[catch {run_tool -name {PROGRAMDEVICE}} result]} {
+    puts "ERROR: PROGRAMDEVICE failed: $result"
     puts "MPF300_PROGRAM_FAILED"
     close_project -save 0
     return -1
 }
 puts "MPF300_FABRIC_PROGRAMMED"
+} else {
+    puts "INFO: SKIP_FABRIC=1 -- skipping fabric/sNVM programming."
+}
 
 ###############################################################################
 # Step 2: SPI flash (RAM-init client with the NEORV32 firmware)
@@ -79,7 +96,7 @@ puts "MPF300_FABRIC_PROGRAMMED"
 puts "INFO: Programming SPI flash image (System Controller SPI)..."
 configure_tool \
     -name {PROGRAM_SPI_FLASH_IMAGE} \
-    -params {spi_flash_prog_action: PROGRAM_SPI_FLASH}
+    -params {spi_flash_prog_action:PROGRAM_SPI_IMAGE}
 if {[catch {run_tool -name {PROGRAM_SPI_FLASH_IMAGE}} result]} {
     puts "ERROR: PROGRAM_SPI_FLASH_IMAGE failed: $result"
     puts "MPF300_PROGRAM_FAILED"

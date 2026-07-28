@@ -160,9 +160,9 @@ Only **one** jumper leaves its factory default — the FMC VADJ selector
 | Jumper | Setting | Why |
 |---|---|---|
 | **J32** | **pins 3-4 closed** (change from default 1-2) | Sets `VCCIO_LPC_VADJ` to **2.5 V**. Default is 3.3 V, which is wrong for this design *and* for the FMCOMMS2. |
+| **J10** | **pins 1-2 closed** (change from default open) | Routes the SPI flash to the PolarFire's SC_SPI (a 74CBTLV3257 mux, U71, sits between the flash and either the FTDI or the PolarFire; J10 drives its select). Required both for programming the flash (the System Controller writes it over JTAG) and for **every power-up** (stage-3 init streams the firmware from flash). With J10 open the flash is muxed to the FTDI and the programmer reports "SPI - Flash is not connected or not supported". |
 | J5-J9 | default (PolarFire JTAG path) | Routes the FTDI to the PolarFire's JTAG; UG0786 says "always retain the default." |
 | J11 | default (1-2 closed) | Program via the on-board FTDI over USB. Open only to use an external FlashPro5. |
-| J10 | default (open) | Open = normal JTAG programming. (Closed is SPI-master self-programming *of the FPGA from flash* — a different feature, not used here.) |
 | J3 | default (open, 1.0 V core) | Standard core voltage. |
 | J4 | default (1-2 closed) | Power via slide switch SW1. |
 
@@ -221,7 +221,7 @@ Sequence:
 
 1. Jumpers as above, FMCOMMS2 seated, 12 V adapter, mini-USB to host,
    SW1 on.
-2. Program fabric + sNVM: `program_board.tcl` step 1 (`PROGRAM_DEVICE`),
+2. Program fabric + sNVM: `program_board.tcl` step 1 (`PROGRAMDEVICE`),
    or FlashPro Express with the exported `.job`.
 3. Program the SPI flash: `program_board.tcl` step 2
    (`PROGRAM_SPI_FLASH_IMAGE`). The SPI Flash memory map comes from
