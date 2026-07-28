@@ -45,10 +45,16 @@
 
 variable project_name "fmcomms2_mpf300"
 # Libero identifies the device by family/die/package rather than a single
-# Vivado-style part string. MPF300TS_ES is the Splash Kit die and the only
-# MPF300-family die enabled by the Libero Silver license.
+# Vivado-style part string. MPF300T = the Splash Kit device
+# (MPF300T-1FCG484E per the kit QuickStart, production silicon: the board's
+# IDCODE 0x5F8131CF reads back as production MPF300(T|TS|...), and the
+# programmer refuses a bitstream built for the MPF300TS_ES eval die used
+# here previously). The Silver license covers MPF300T -- "Your Kit will
+# work with Silver License" (QuickStart p.4); note new_project's
+# rejected-die error message lists neither MPF300T nor MPF300TS_ES even
+# though both are accepted.
 variable family "PolarFire"
-variable die "MPF300TS_ES"
+variable die "MPF300T"
 variable pkg "FCG484"
 variable speed "-1"
 variable part_range "EXT"
@@ -153,6 +159,7 @@ variable helper_files {
     lclk_reset_sync.v
     dac_hold.v
     refclk_ibuf.v
+    led_status.v
 }
 
 # PULP platform components (deps/common_cells v1.39.0, deps/axi v0.39.10):
@@ -518,6 +525,10 @@ proc build_all {} {
     sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {lclk_reset_sync} \
         -hdl_file {hdl/lclk_reset_sync.v} -instance_name $lclk_rst
 
+    # boot/bring-up status on the 8 user LEDs (see hdl/led_status.v)
+    sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {led_status} \
+        -hdl_file {hdl/led_status.v} -instance_name {led_status_0}
+
     # NEORV32 (axau15 configuration at 125 MHz, fixed inside the wrapper)
     sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {neorv32_mpf300_top} \
         -hdl_file {hdl/neorv32_mpf300_top.vhd} -instance_name $neorv32_cpu
@@ -591,6 +602,7 @@ proc build_all {} {
         "$axi_ad9361:tx_data_out_n"     tx_data_out_n \
         "$axi_ad9361:enable"            enable \
         "$axi_ad9361:txnrx"             txnrx \
+        "led_status_0:led"              led \
     ]
 
     ###########################################################################
@@ -886,7 +898,7 @@ proc build_all {} {
         if {[string match "set_client*" $line]} {
             if {$block ne ""} {
                 if {[string first "INFERRED_INITIALIZED" $block] >= 0} {
-                    regsub -all {storage_type \{SNVM\}} $block {storage_type {SPIFLASH}} block
+                    regsub -all {storage_type \{SNVM\}} $block {storage_type {SPI}} block
                 }
                 puts -nonewline $out $block
             }
@@ -897,33 +909,40 @@ proc build_all {} {
     }
     if {$block ne ""} {
         if {[string first "INFERRED_INITIALIZED" $block] >= 0} {
-            regsub -all {storage_type \{SNVM\}} $block {storage_type {SPIFLASH}} block
+            regsub -all {storage_type \{SNVM\}} $block {storage_type {SPI}} block
         }
         puts -nonewline $out $block
     }
     close $in
     close $out
 
-    puts "INFO: Retargeting initialized RAM clients to SPI flash..."
-    if {[catch {configure_ram -cfg_file $spi_cfg} result]} {
-        puts "ERROR: configure_ram failed: $result"
-        return -1
-    }
-    # SPI client at 0x400, plaintext, divider 2 (40 MHz System Controller SPI)
-    if {[catch {configure_design_initialization_data \
-            -second_stage_start_address {0x00000000} \
-            -third_stage_spi_start_address {0x00000400} \
-            -third_stage_spi_type {SPIFLASH_NO_BINDING_PLAINTEXT} \
-            -third_stage_spi_clock_divider {2} \
-            -init_timeout {128} \
-            -broadcast_RAMs {0}} result]} {
-        puts "WARNING: configure_design_initialization_data: $result"
-    }
-
+    # The RAM-client storage_type token for SPI flash is literally {SPI}
+    # (captured from a GUI-written RAM.cfg). {SPIFLASH} and {SPI_FLASH} are
+    # silently accepted by configure_ram but drop the client from the
+    # stage-3 assembly -- the SPI image then contains only the placeholder.
+    #
+    # ORDER MATTERS: the SPI flash memory map must be configured BEFORE
+    # configure_ram assigns clients to SPI storage. With the memory
+    # undefined, Libero accepts the configure_ram call but silently DROPS the
+    # initialized clients -- the second GENERATE_INIT_DATA then reports only
+    # "Stage 1 ... added to sNVM" (no stage-3 client), the SPI image contains
+    # nothing but the placeholder, and the board boots with an uninitialized
+    # IMEM (CPU runs garbage, console stays silent).
+    #
     # SPI Flash memory-map configuration (cfg/spiflash.cfg, ships in repo):
-    # memory size 131072 KiB (1 Gb MT25QL01GB) plus one 256-byte STATIC_FILL
-    # placeholder client at 0x100000. The placeholder works around a Libero
-    # 2025.2 batch-mode bug: with zero user clients in the SPI Flash map,
+    # memory size 134217728 -- the field is in BYTES, so this is 128 MiB,
+    # the size of the 1 Gb MT25QL01GB -- plus one 256-byte STATIC_FILL
+    # placeholder client at 8388608 decimal = 8 MiB.
+    # The placeholder's address MUST stay clear of the stage-3 design-init
+    # client, which Libero places at flash offset 0x400 and which is ~263 KB
+    # for this design (0x400..~0x40C60): a placeholder inside that span makes
+    # Libero silently drop the init client. The -start_address field parses
+    # as DECIMAL: a 0x-prefixed value is coerced to 0 (warning only), which
+    # would land the placeholder at address 0 -- on top of the 0x400 client --
+    # so the address is written in plain decimal here (8388608, not 0x800000).
+    #
+    # The placeholder also works around a Libero 2025.2 batch-mode bug: with
+    # zero user clients in the SPI Flash map,
     # isSpiFlashConfiguredAndValid() (libitlfpro.so) raises the "There are
     # no SPI Flash clients selected for programming" dialog via
     # App::GetMainFrameWidget(), which is NULL in batch mode -> SIGSEGV in
@@ -935,16 +954,55 @@ proc build_all {} {
     set have_spiflash_cfg [file exists $spiflash_cfg]
     if {$have_spiflash_cfg} {
         puts "INFO: Applying SPI Flash memory configuration..."
+        # Hard error: if this call fails the whole SPI branch is skipped and
+        # the build would quietly produce a fabric+sNVM-only job with no
+        # firmware anywhere (silent console on the board).
         if {[catch {configure_spiflash -cfg_file $spiflash_cfg} result]} {
-            puts "WARNING: configure_spiflash failed: $result"
-            set have_spiflash_cfg 0
+            puts "ERROR: configure_spiflash failed: $result"
+            puts "ERROR: check cfg/spiflash.cfg -- set_spi_flash_memory_size"
+            puts "ERROR: is in BYTES (134217728 = 128 MiB = the 1 Gb"
+            puts "ERROR: MT25QL01GB)."
+            return -1
         }
+    }
+
+    # Now that the SPI flash memory exists, retarget the initialized RAM
+    # clients onto it (see the ORDER MATTERS note above).
+    puts "INFO: Retargeting initialized RAM clients to SPI flash..."
+    if {[catch {configure_ram -cfg_file $spi_cfg} result]} {
+        puts "ERROR: configure_ram failed: $result"
+        return -1
+    }
+
+    # SPI client at 0x400, plaintext, divider 2 (40 MHz System Controller SPI)
+    if {[catch {configure_design_initialization_data \
+            -second_stage_start_address {0x00000000} \
+            -third_stage_spi_start_address {0x00000400} \
+            -third_stage_spi_type {SPIFLASH_NO_BINDING_PLAINTEXT} \
+            -third_stage_spi_clock_divider {2} \
+            -init_timeout {128} \
+            -broadcast_RAMs {0}} result]} {
+        puts "WARNING: configure_design_initialization_data: $result"
     }
 
     puts "INFO: Regenerating design initialization data (SPI-flash placement)..."
     if {[catch {run_tool -name {GENERATE_INIT_DATA}} result]} {
         puts "ERROR: GENERATE_INIT_DATA (SPI-flash placement) failed: $result"
         return -1
+    }
+
+    # Diagnostics: report which init-stage artifacts exist. A stage-3 client
+    # hosted in SPI flash does not produce Top_init_stage_2_3_assembly.txt
+    # (that file is written for sNVM-hosted stages), so its absence here is
+    # not conclusive -- the real check is the SPI image size, further below.
+    foreach f {Top_init_stage_1_assembly.txt Top_init_stage_2_3_assembly.txt \
+               Top_init_all_stages.mem} {
+        set p "$proj_dir/designer/Top/$f"
+        if {[file exists $p]} {
+            puts "INFO: init artifact $f: [file size $p] bytes"
+        } else {
+            puts "INFO: init artifact $f: (absent)"
+        }
     }
 
     puts "INFO: Generating bitstream..."
@@ -972,6 +1030,29 @@ proc build_all {} {
         puts "INFO: Generating SPI flash image..."
         if {[catch {run_tool -name {GENERATE_SPI_FLASH_IMAGE}} result]} {
             puts "ERROR: GENERATE_SPI_FLASH_IMAGE failed: $result"
+            return -1
+        }
+
+        # The SPI image must carry the stage-3 fabric-RAM init client (the
+        # NEORV32 firmware, ~263 KB for this design). If it is tiny, only the
+        # placeholder client made it in: the board would boot with an
+        # uninitialized IMEM and a silent console. Fail loudly rather than
+        # ship a dud image.
+        set spi_img "$proj_dir/designer/Top/Top_spi_flash.bin"
+        if {[file exists $spi_img]} {
+            set spi_sz [file size $spi_img]
+            puts "INFO: SPI flash image: $spi_sz bytes"
+            if {$spi_sz < 200000} {
+                puts "ERROR: SPI flash image is only $spi_sz bytes -- the"
+                puts "ERROR: stage-3 init client (NEORV32 firmware image) is"
+                puts "ERROR: missing. Do not program: the CPU would boot from"
+                puts "ERROR: uninitialized IMEM (silent UART console)."
+                return -1
+            }
+        } else {
+            puts "ERROR: $spi_img was not generated -- the SPI flash image"
+            puts "ERROR: (with the NEORV32 firmware) does not exist. Do not"
+            puts "ERROR: program: the CPU would boot from uninitialized IMEM."
             return -1
         }
 

@@ -6,6 +6,7 @@ ipcache
 *.dat
 *.xpr
 *.log
+*.stdout
 *.bld
 *.chk
 *.cmd_log
