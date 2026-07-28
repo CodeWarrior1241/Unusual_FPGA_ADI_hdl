@@ -72,6 +72,14 @@ open_project -file {/media/fpgadev/Dev_Tools/Work/QPSK_Triple_Comparison/deps/hd
 # device already matches (compare the printed bitstream digests).
 set SKIP_FABRIC 0
 
+# Set to 1 to skip step 2 (SPI flash). CAUTION: only safe when the flash
+# already holds the image from THIS build. The stage-3 init stream writes
+# firmware into specific physical RAM1K20 blocks chosen at place & route
+# (TAKEOVER_LSRAM block IDs) -- after any rebuild that re-placed the
+# design, the old flash image targets the old block locations and the CPU
+# would boot garbage. When in doubt, program both memories.
+set SKIP_SPI 0
+
 ###############################################################################
 # Step 1: fabric + sNVM over JTAG
 ###############################################################################
@@ -93,6 +101,7 @@ puts "MPF300_FABRIC_PROGRAMMED"
 # Step 2: SPI flash (RAM-init client with the NEORV32 firmware)
 ###############################################################################
 
+if {!$SKIP_SPI} {
 puts "INFO: Programming SPI flash image (System Controller SPI)..."
 configure_tool \
     -name {PROGRAM_SPI_FLASH_IMAGE} \
@@ -104,6 +113,9 @@ if {[catch {run_tool -name {PROGRAM_SPI_FLASH_IMAGE}} result]} {
     return -1
 }
 puts "MPF300_SPI_FLASH_PROGRAMMED"
+} else {
+    puts "INFO: SKIP_SPI=1 -- skipping SPI flash programming."
+}
 
 puts ""
 puts "==============================================================================="

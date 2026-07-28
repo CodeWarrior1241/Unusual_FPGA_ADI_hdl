@@ -153,12 +153,12 @@ en_agc, bits7:5 ctl, bit8 pwr_dn), SPI CS bit 0, UART0 console at 115200.
 
 ### Jumper configuration (set with board powered OFF)
 
-Only **one** jumper leaves its factory default — the FMC VADJ selector
-(references: UG0786 Table 3, board schematics in
-`doc/MPF300-Splash-Kit/`):
+(references: UG0786 Table 3, board schematics in `doc/MPF300-Splash-Kit/`,
+PolarFire Programming UG Table 3-4 for the SC-SPI mode straps):
 
 | Jumper | Setting | Why |
 |---|---|---|
+| **J35** | **OPEN — no shunt** | Straps `IO_CFG_INTF` (ball G9). Open = pulled high = the System Controller's SPI powers up in **master** mode, required for stage-3 design init from the flash. **A shunt here puts the SC-SPI in slave programming mode, and "design initialization from an external SPI flash is not supported in SPI slave mode": the SC silently skips stage 3, `SRAM_INIT_DONE` never asserts, the CPU is held in reset and the console stays silent — while JTAG programming of the very same flash keeps working.** (`SPI_EN` is hardwired high on this board: R349 pull-up, R350 pull-down not loaded.) Undocumented in UG0786's jumper table; found the hard way. |
 | **J32** | **pins 3-4 closed** (change from default 1-2) | Sets `VCCIO_LPC_VADJ` to **2.5 V**. Default is 3.3 V, which is wrong for this design *and* for the FMCOMMS2. |
 | **J10** | **pins 1-2 closed** (change from default open) | Routes the SPI flash to the PolarFire's SC_SPI (a 74CBTLV3257 mux, U71, sits between the flash and either the FTDI or the PolarFire; J10 drives its select). Required both for programming the flash (the System Controller writes it over JTAG) and for **every power-up** (stage-3 init streams the firmware from flash). With J10 open the flash is muxed to the FTDI and the programmer reports "SPI - Flash is not connected or not supported". |
 | J5-J9 | default (PolarFire JTAG path) | Routes the FTDI to the PolarFire's JTAG; UG0786 says "always retain the default." |
@@ -231,9 +231,24 @@ Sequence:
    header.
 4. Power-cycle (a clean init run needs it). Boot takes the three-stage
    init described above, then the no-os console appears on the FTDI UART
-   (115200).
+   (115200). The console is FT4232H channel C — the single `ttyUSB` the
+   `ftdi_sio` driver binds (the FTDI enumerates with Microsemi's VID/PID
+   `1514:2008` "Embedded FlashPro5", not as a generic FTDI). Only ONE
+   process may read the tty at a time — two readers split the byte
+   stream and both see garbage.
 
 ## Status / timing (2026-07-19, Libero 2025.2, PULP/open-logic components)
+
+**First hardware boot: 2026-07-28.** With J35 open (see the jumper
+table), the full chain works on the Splash Kit: three-stage init loads
+the firmware from SPI flash into the IMEM LSRAMs, the CPU boots, and
+the ad9361_no-os console runs through `ad9361_init OK` (AD936x Rev 2
+over SPI), FDD, dig_tune, and "Ready — awaiting commands" at 115200.
+(During bring-up the board was reprogrammed with a stage-3 SPI clock
+divider of 6 — 13.3 MHz — while chasing the J35 issue; the divider was
+not the problem, and `build_all.tcl` keeps the intended divider 2 =
+40 MHz, well within the MT25QL01GB's 90 MHz rating. The next full
+rebuild + reprogram returns the board to divider 2.)
 
 **Timing is met at 125 MHz** — `Info: Timing constraints have been met`,
 zero violating paths, with the PULP `axi_lite_xbar` interconnect,

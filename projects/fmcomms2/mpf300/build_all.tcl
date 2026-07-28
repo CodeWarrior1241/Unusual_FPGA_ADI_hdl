@@ -159,7 +159,6 @@ variable helper_files {
     lclk_reset_sync.v
     dac_hold.v
     refclk_ibuf.v
-    led_status.v
 }
 
 # PULP platform components (deps/common_cells v1.39.0, deps/axi v0.39.10):
@@ -525,10 +524,6 @@ proc build_all {} {
     sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {lclk_reset_sync} \
         -hdl_file {hdl/lclk_reset_sync.v} -instance_name $lclk_rst
 
-    # boot/bring-up status on the 8 user LEDs (see hdl/led_status.v)
-    sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {led_status} \
-        -hdl_file {hdl/led_status.v} -instance_name {led_status_0}
-
     # NEORV32 (axau15 configuration at 125 MHz, fixed inside the wrapper)
     sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {neorv32_mpf300_top} \
         -hdl_file {hdl/neorv32_mpf300_top.vhd} -instance_name $neorv32_cpu
@@ -602,7 +597,6 @@ proc build_all {} {
         "$axi_ad9361:tx_data_out_n"     tx_data_out_n \
         "$axi_ad9361:enable"            enable \
         "$axi_ad9361:txnrx"             txnrx \
-        "led_status_0:led"              led \
     ]
 
     ###########################################################################
