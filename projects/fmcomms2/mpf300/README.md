@@ -244,11 +244,15 @@ table), the full chain works on the Splash Kit: three-stage init loads
 the firmware from SPI flash into the IMEM LSRAMs, the CPU boots, and
 the ad9361_no-os console runs through `ad9361_init OK` (AD936x Rev 2
 over SPI), FDD, dig_tune, and "Ready — awaiting commands" at 115200.
-(During bring-up the board was reprogrammed with a stage-3 SPI clock
-divider of 6 — 13.3 MHz — while chasing the J35 issue; the divider was
-not the problem, and `build_all.tcl` keeps the intended divider 2 =
-40 MHz, well within the MT25QL01GB's 90 MHz rating. The next full
-rebuild + reprogram returns the board to divider 2.)
+**The stage-3 SPI clock divider must be 6 (13.3 MHz).** Divider 2
+(40 MHz) does not boot on this board — the System Controller's flash
+read fails and the boot stalls exactly like the J35 fault (no
+`SRAM_INIT_DONE`, CPU in reset, silent console) — even though the
+MT25QL01GB itself is rated 90 MHz; the read path runs through the
+74CBTLV3257 mux chain (U16/U36) and does not close timing at 40 MHz.
+Verified both ways on hardware (2026-07-28): identical fabric bitstream
+and flash content, divider 2 = dead, divider 6 = boots. `build_all.tcl`
+sets divider 6. Divider 4 (20 MHz) is untested.
 
 **Timing is met at 125 MHz** — `Info: Timing constraints have been met`,
 zero violating paths, with the PULP `axi_lite_xbar` interconnect,

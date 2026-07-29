@@ -968,12 +968,20 @@ proc build_all {} {
         return -1
     }
 
-    # SPI client at 0x400, plaintext, divider 2 (40 MHz System Controller SPI)
+    # SPI client at 0x400, plaintext. Clock divider 6 = 13.3 MHz System
+    # Controller SPI: divider 2 (40 MHz) does NOT boot on the Splash Kit --
+    # the stage-3 flash read fails (SRAM_INIT_DONE never asserts, CPU held
+    # in reset, silent console) even though the MT25QL01GB is rated 90 MHz.
+    # The SC reads the flash through the board's 74CBTLV3257 mux chain
+    # (U16/U36, J10-selected), and the round trip does not close at 40 MHz.
+    # Verified on hardware 2026-07-28: divider 2 = dead, divider 6 = boots
+    # (same fabric bitstream, same flash content). Divider 4 (20 MHz) is
+    # untested.
     if {[catch {configure_design_initialization_data \
             -second_stage_start_address {0x00000000} \
             -third_stage_spi_start_address {0x00000400} \
             -third_stage_spi_type {SPIFLASH_NO_BINDING_PLAINTEXT} \
-            -third_stage_spi_clock_divider {2} \
+            -third_stage_spi_clock_divider {6} \
             -init_timeout {128} \
             -broadcast_RAMs {0}} result]} {
         puts "WARNING: configure_design_initialization_data: $result"
