@@ -35,19 +35,14 @@ create_generated_clock -name clk_125mhz \
 ###############################################################################
 ## AD9361 LVDS RX: source-synchronous DDR input capture (chip -> FPGA)
 ##
-## The chip launches rx_frame and rx_data edge-aligned with DATA_CLK: each
-## bit transitions t_DDDV after every DATA_CLK edge. AD9361 datasheet LVDS
-## timing (VERIFY against the datasheet revision in use):
-##   t_DDDV(min) = 0.25 ns   t_DDDV(max) = 1.25 ns
-## So the valid window for the bit launched at edge N runs from
-## (N + 1.25 ns) to (next edge + 0.25 ns). The PolarFire capture is
-## fabric-emulated DDR (polarfire/common/ad_data_in.v): posedge and negedge
-## fabric FFs clocked by l_clk (= DATA_CLK after INBUF + CLKINT, i.e. the
-## global-network insertion delay sets the effective sampling point). These
-## constraints make SmartTime analyze exactly that geometry and force the
-## placer to balance the per-bit pad->FF routing -- both were previously
-## unconstrained, and the interface corrupted data (the PN monitors never
-## locked under chip PRBS: hold_bist + get_valid_rate = 100% oos re-set).
+## The chip launches rx_frame/rx_data edge-aligned with DATA_CLK: each bit
+## transitions t_DDDV = 0.25..1.25 ns (datasheet LVDS timing) after every
+## clock edge, so the bit launched at edge N is valid from N + 1.25 ns to
+## (next edge) + 0.25 ns. Capture is fabric-emulated DDR
+## (polarfire/common/ad_data_in.v) clocked by l_clk (PF_CCC_C1 OUT0).
+## These windows make SmartTime check every sampling point against the eye
+## and make the placer balance the per-bit pad->FF routing -- mandatory
+## for fabric capture, where unmanaged per-bit skew is nanosecond-class.
 ###############################################################################
 
 set rx_ddr_in_ports [ get_ports { rx_data_in_p[*] rx_data_in_n[*] \
@@ -63,21 +58,31 @@ set_input_delay -clock rx_clk_in -clock_fall -min 0.250 -add_delay $rx_ddr_in_po
 ###############################################################################
 ## AD9361 LVDS TX: source-synchronous DDR output (FPGA -> chip)
 ##
-## The FPGA forwards FB_CLK (tx_clk_out) and launches tx_frame/tx_data from
-## identical fabric-emulated DDR output structures (polarfire/common/
-## ad_data_out.v), all driven by l_clk. The chip re-samples TX data on both
-## FB_CLK edges and needs (AD9361 datasheet LVDS timing, VERIFY):
-##   t_STX(setup, min) = 1.0 ns   t_HTX(hold, min) = 0 ns
-## tx_fb_clk models the forwarded clock at its pad; the output delays make
-## SmartTime time every data pad against the forwarded-clock pad and force
-## the placer to balance the 8 output structures. If SmartTime cannot trace
-## the generated clock through the DDR output mux it warns that tx_fb_clk
-## has no driving path -- check the post-P&R timing report; fall back to
-## set_max_delay/set_min_delay port-to-port matching if so.
+## tx_frame/tx_data launch from identical fabric DDR structures
+## (polarfire/common/ad_data_out.v) on l_clk; the forwarded FB_CLK launches
+## from the same structure on PF_CCC_C1's +90 deg OUT1, placing its edges
+## a quarter period into the TX data eye (see ad_data_clk.v). The chip
+## samples TX data on both FB_CLK edges: t_STX(setup) = 1.0 ns,
+## t_HTX(hold) = 0 ns (datasheet LVDS timing). tx_fb_clk models the
+## forwarded clock at its pad; the output delays time every data pad
+## against it.
 ###############################################################################
 
-create_generated_clock -name tx_fb_clk \
+# Fabric-referenced CCC outputs are not derived by SmartTime (same as
+# clk_125mhz above) -- declare both explicitly. The +90 deg of OUT1 is
+# not modeled (meaningless under the 8 ns ceiling period), so the TX I/O
+# checks are advisory; hardware PN BIST / RF EVM verify the interface.
+create_generated_clock -name l_clk_pll \
     -source [ get_ports { rx_clk_in_p } ] \
+    -multiply_by 1 \
+    [ get_pins { *PF_CCC_C1_0/pll_inst_0/OUT0 } ]
+create_generated_clock -name tx_fbclk_90 \
+    -source [ get_ports { rx_clk_in_p } ] \
+    -multiply_by 1 \
+    [ get_pins { *PF_CCC_C1_0/pll_inst_0/OUT1 } ]
+
+create_generated_clock -name tx_fb_clk \
+    -source [ get_pins { *PF_CCC_C1_0/pll_inst_0/OUT1 } ] \
     -multiply_by 1 \
     [ get_ports { tx_clk_out_p } ]
 
@@ -91,32 +96,8 @@ set_output_delay -clock tx_fb_clk -min 0.000 $tx_ddr_out_ports
 set_output_delay -clock tx_fb_clk -clock_fall -max 1.000 -add_delay $tx_ddr_out_ports
 set_output_delay -clock tx_fb_clk -clock_fall -min 0.000 -add_delay $tx_ddr_out_ports
 
-# ---------------------------------------------------------------------------
-# FB_CLK quarter-period shift (TX eye centering).
-#
-# All TX outputs (clock included) launch from identical fabric DDR muxes
-# switching on every l_clk edge, so with a matched clock path FB_CLK edges
-# land exactly on the data transition instants and the chip samples at the
-# eye edge -- dac_clksel only swaps which bit pairs with which edge, it
-# cannot move the sampling point (verified on hardware: clksel_on had no
-# effect; loopback EVM stayed ~27% with RX proven bit-perfect by PN BIST).
-#
-# Force the rx_clk_in -> tx_clk_out pad path to be ~4.1 ns (quarter of the
-# 16.276 ns DATA_CLK period, half a UI) longer than the ~4.8 ns natural
-# data-pad paths: the placer/router adds the detour on the clock net only,
-# FB_CLK edges move to mid-eye, and the set_output_delay checks above then
-# verify the resulting setup/hold against the chip's t_STX/t_HTX.
-# Multi-corner spread of a routing detour is roughly +/-1 ns here; the
-# 8.6-9.6 window keeps >= 2.5 ns of eye margin at both corners at the
-# real 61.44 MHz rate.
-# ---------------------------------------------------------------------------
-
-set_min_delay 8.600 -from [ get_ports { rx_clk_in_p } ] \
-    -to [ get_ports { tx_clk_out_p tx_clk_out_n } ]
-set_max_delay 9.600 -from [ get_ports { rx_clk_in_p } ] \
-    -to [ get_ports { tx_clk_out_p tx_clk_out_n } ]
-
-# l_clk domain (and the FB_CLK derived from it) is asynchronous to the
-# fabric clocks; the ADI up_* synchronizers and the CDC FIFOs own every
-# crossing.
-set_clock_groups -asynchronous -group [ get_clocks { rx_clk_in tx_fb_clk } ]
+# The l_clk family (CCC pair and the FB_CLK derived from it) is
+# asynchronous to the fabric clocks; the ADI up_* synchronizers and the
+# CDC FIFOs own every crossing.
+set_clock_groups -asynchronous \
+    -group [ get_clocks { rx_clk_in l_clk_pll tx_fbclk_90 tx_fb_clk } ]

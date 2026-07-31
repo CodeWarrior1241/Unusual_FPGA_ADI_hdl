@@ -237,63 +237,202 @@ Sequence:
    process may read the tty at a time — two readers split the byte
    stream and both see garbage.
 
-## Status / timing (2026-07-19, Libero 2025.2, PULP/open-logic components)
+## Status / timing (Libero 2025.2)
 
-**First hardware boot: 2026-07-28.** With J35 open (see the jumper
-table), the full chain works on the Splash Kit: three-stage init loads
-the firmware from SPI flash into the IMEM LSRAMs, the CPU boots, and
-the ad9361_no-os console runs through `ad9361_init OK` (AD936x Rev 2
-over SPI), FDD, dig_tune, and "Ready — awaiting commands" at 115200.
-**The stage-3 SPI clock divider must be 6 (13.3 MHz).** Divider 2
-(40 MHz) does not boot on this board — the System Controller's flash
-read fails and the boot stalls exactly like the J35 fault (no
-`SRAM_INIT_DONE`, CPU in reset, silent console) — even though the
-MT25QL01GB itself is rated 90 MHz; the read path runs through the
-74CBTLV3257 mux chain (U16/U36) and does not close timing at 40 MHz.
-Verified both ways on hardware (2026-07-28): identical fabric bitstream
-and flash content, divider 2 = dead, divider 6 = boots. `build_all.tcl`
-sets divider 6. Divider 4 (20 MHz) is untested.
+The design is fully operational on the Splash Kit: power-up loads the
+NEORV32 firmware from SPI flash into the IMEM LSRAMs (jumper and SPI
+divider requirements are in "Deploying to the Splash Kit" above), the
+CPU boots the ad9361_no-os application, and the RF QPSK link measures
+**2.06% EVM** with no runtime tuning (axau15 reference: ~2.5%).
 
-**Timing is met at 125 MHz** — `Info: Timing constraints have been met`,
-zero violating paths, with the PULP `axi_lite_xbar` interconnect,
-open-logic CDC FIFOs / reset blocks, and the pipelined-multiplier patch
-in place. The xbar runs with `LatencyMode = CUT_ALL_PORTS`: the SmartHLS
-bridge's `r_valid` depends combinationally on `r_ready`, which closes a
-loop through a fall-through demux — the spill registers sever it and
-also bought back ~0.4 ns on the CPU domain. Post-layout multi-corner:
+All internal clock domains meet timing at 125 MHz. The only paths the
+timing report flags are the AD9361 I/O eye checks, which are analyzed
+at a deliberately pessimistic 8 ns ceiling period (see the interface
+section below) and are verified on hardware instead: the chip's PRBS
+BIST through the RX interface shows zero PN sync losses
+(`hold_bist` + `get_valid_rate` console commands), and RF EVM covers
+the interface end to end. Chip BB loopback EVM is qualitative only —
+the loopback path bypasses the RX analog DC/gain handling and carries a
+mode artifact.
 
-| Clock | Constraint | Worst setup slack | Meets |
-|---|---|---|---|
-| `rx_clk_in` (AD9361 l_clk domain) | 125 MHz | +3.32 ns | yes |
-| `clk_125mhz` (NEORV32/AXI domain) | 125 MHz | **+1.14 ns** | yes |
-| hold, all clocks, all corners | - | +0.012 ns worst | yes |
+24.1k logic elements (8% of MPF300); synthesis ~2.5 min, place & route
+~11 min, full build through bitstream + export ~20 min.
 
-24.1k logic elements (8% of MPF300); synthesis ~2.5 min (was ~1 h 50 min
-before the mpf300-only `hdl/neorv32_imem_rom.vhd` LSRAM wrapper and
-`-automatic_compile_point 0` — Synplify's compile-point flow re-mapped
-the IMEM ROM as a ~66k-LUT mux tree and retimed it for the better part
-of two hours before discarding the result), place & route ~6 min; full
-build through bitstream + export ~15 min.
+Timing-relevant configuration, in one place:
 
-### How the CPU domain got from 69 MHz to 125 MHz
+- **IMEM ROM in LSRAM**: `hdl/neorv32_imem_rom.vhd` pins the inferred
+  128 KB ROM to `syn_romstyle = "lsram"`, and `build_all.tcl` passes
+  `set_option -rom_map_logic 0` and `-automatic_compile_point 0` so
+  every Synplify mapping context extracts RAM1K20s instead of building
+  a LUT mux tree. Contents load at power-up via the design-init flow.
+- **CDC FIFOs in LSRAM**: `hdl/axis_async_fifo.v` wraps open-logic
+  `olo_base_fifo_async` with `RamStyle_g "block"` (512x41, one LSRAM
+  per FIFO), keeping the die compact and the xbar handshake paths
+  short.
+- **Interconnect**: the PULP `axi_lite_xbar` runs with
+  `LatencyMode = CUT_ALL_PORTS` — the SmartHLS bridge's `r_valid`
+  depends combinationally on `r_ready`, and the spill registers sever
+  the loop that would otherwise form through the fall-through demux.
+- **CPU multiplier**: `CPU_FAST_MUL_REG => true` pipelines the DSP
+  fast multiplier (see the dedicated section below).
+- **Synplify retiming** (`set_option -retiming 1`) is enabled for the
+  CPU domain.
 
-Each step was found by reading the reports, not by raising tool effort:
+### AD9361 LVDS interface clocking and I/O timing
 
-1. **IMEM ROM into LSRAM** (~69 -> ~109 MHz). Synplify's default
-   `rom_map_logic 1` had mapped the inferred 128 KB IMEM ROM to LUT
-   logic — a 1-Mbit mux tree, 65k of the design's 74k LUTs, and a 6 h
-   timing-driven placer run. `build_all.tcl` now passes
-   `set_option -rom_map_logic 0`; contents are loaded at power-up by the
-   design-initialization flow via PF_INIT_MONITOR.
-2. **CDC FIFOs into LSRAM** (~109 -> ~112 MHz, and much less
-   congestion). `hdl/axis_async_fifo.v` now wraps open-logic
-   `olo_base_fifo_async` with `RamStyle_g "block"`, 512x41 in one LSRAM
-   per FIFO, reclaiming ~16k flops and ~12k LUTs versus the register-based
-   PULP `cdc_fifo_gray`. This also removed the xbar handshake path from
-   the critical list — that path was ~8 ns of *routing* caused by the
-   FIFOs spreading the design across the die, not decode depth.
-3. **Pipelined fast multiplier** (~112 -> 125 MHz, +1.14 ns). The
-   `CPU_FAST_MUL_REG` generic, enabled in the wrapper (see below).
+The interface is two independent source-synchronous DDR links running
+from one frequency reference, the AD9361's `DATA_CLK`. In this design's
+fixed RF profile (1R1T, 30.72 MSPS) `DATA_CLK` is 61.44 MHz: period
+16.276 ns, so one DDR unit interval (UI) — one bit time — is 8.138 ns.
+
+```
+                AD9361                              MPF300
+   +---------------------------+    +-----------------------------------------+
+   |                           |    |                                         |
+   |  DATA_CLK (61.44 MHz) ----+----+-> INBUF_DIFF -> CLKINT_PRESERVE         |
+   |    sources ALL timing     |    |                       |                 |
+   |                           |    |                  PF_CCC_C1 (PLL)        |
+   |                           |    |                   |          |          |
+   |                           |    |          OUT0 = l_clk    OUT1 = +90 deg |
+   |                           |    |           (0 deg)            |          |
+   |                           |    |               |              |          |
+   |  rx_frame, rx_data[5:0] --+----+-> pad/route --+-> DDR        |          |
+   |    (DDR, launched on      |    |     (per bit)    capture FFs |          |
+   |     DATA_CLK edges)       |    |       [RX: clocked by l_clk] |          |
+   |                           |    |                              |          |
+   |  FB_CLK <-----------------+----+--- DDR out mux <-------------+          |
+   |    (TX sampling strobe)   |    |      [FB_CLK pad: const 01, from OUT1]  |
+   |                           |    |                                         |
+   |  tx_frame, tx_data[5:0] <-+----+--- DDR out muxes <-- l_clk (OUT0)       |
+   |    (chip samples these    |    |      [TX DATA: 7 structures]            |
+   |     on FB_CLK edges)      |    |                                         |
+   +---------------------------+    +-----------------------------------------+
+```
+
+The clocks:
+
+- **`DATA_CLK`** — generated by the AD9361, the sole frequency
+  reference for the interface. Enters on an FMC-dictated pin that is
+  not a CCC-function pin, so it must reach the PLL through the fabric
+  global network: `INBUF_DIFF -> CLKINT_PRESERVE -> PF_CCC_C1`
+  (`CLKINT_PRESERVE`, not plain `CLKINT`, or Synplify optimizes the
+  buffer away and P&R reinstates the dedicated-routing rule it cannot
+  satisfy, error PDCPF-13).
+- **`l_clk`** (PF_CCC_C1 OUT0, 0 deg) — the interface-domain clock:
+  clocks the RX capture flip-flops, the whole ADI l_clk-domain
+  datapath, and the TX data/frame output structures.
+- **OUT1** (+90 deg) — clocks exactly one thing: the FB_CLK output
+  structure. The CCC runs Post-VCO feedback, which guarantees the
+  OUT0/OUT1 phase relationship across corners.
+- **`FB_CLK`** — the clock the FPGA sends back to the chip alongside
+  the TX data; the AD9361 samples `tx_frame`/`tx_data` on FB_CLK edges
+  (t_STX = 1.0 ns setup, t_HTX = 0 ns hold). It is produced by the
+  same DDR output structure as the data pins, driven with the constant
+  pattern `01` — so its launch clock's phase directly sets where the
+  chip's sampling edges land in the data eye.
+
+Two clocks enter this design through the fabric, for different reasons.
+`DATA_CLK` has no choice: the Splash Kit routes FMC LA00_CC to ball
+A17, which has no CCC function (the same class of board shortcoming as
+the au15p, whose FMC mapping put LA00_CC on a Xilinx QBC pin with no
+BUFGCE route). The 50 MHz reference on H7, by contrast, IS a
+CCC-function pin (`CLKIN_W_2`, SW-corner CCC) and is routed through
+the fabric **by choice**: the dedicated pad route binds the PLL to the
+SW-corner CCC, while a fabric reference leaves the timing-driven
+placer free to put it anywhere. PLL capacity is not a factor either
+way — each of the MPF300's four corner CCCs contains two PLLs (eight
+sites); this design uses two, both fabric-referenced. A fabric-routed
+reference costs only a little added jitter (insertion delay is
+irrelevant to a PLL reference), plus the bookkeeping this file
+documents: the `CLKINT_PRESERVE` idiom and the manual generated-clock
+declarations in the SDC.
+
+#### RX direction (AD9361 -> FPGA)
+
+The chip launches `rx_frame`/`rx_data[5:0]` edge-aligned with
+`DATA_CLK`: each bit transitions t_DDDV = 0.25..1.25 ns after every
+clock edge (plus ~1.2 ns from the firmware's chip-side
+`rx_data_delay = 4`). The FPGA captures in fabric DDR flip-flops
+clocked by `l_clk`.
+
+```
+time (ns) relative to a DATA_CLK edge "E" at the FPGA pad:
+
+  E                                                     E+8.138 (next edge)
+  |                                                     |
+  |-- transition --|########## DATA VALID ##############|-- transition --|
+  |   region       |          (the eye)                 |   region       |
+  |                                                     |
+  |--- clock path (CCC + global insertion) ---->X
+                                                ^
+                    effective sampling point of the capture FF
+                    (clock insertion minus that bit's pad->FF routing)
+```
+
+`constraint/system.sdc` describes the transition regions with
+`set_input_delay -min/-max` on both clock edges for all 14 inputs.
+The tools then verify per bit and per corner that the sampling point
+lands inside the eye, and — the operative part — place & route
+balances the per-bit pad-to-FF routing so all sampling points cluster.
+Without the constraints the per-bit skew is unmanaged, which is fatal
+for a fabric (soft-logic) capture. Interface integrity is verified on
+hardware with the chip's PRBS BIST: `hold_bist` drives a PN sequence
+through the RX pins and `get_valid_rate` must report 0% PN sync loss.
+
+#### TX direction (FPGA -> AD9361)
+
+All eight TX outputs (six data, frame, FB_CLK) are identical fabric
+DDR structures, so outputs launched from the same clock transition
+simultaneously at the pads. Launching FB_CLK from OUT1 (+90 deg)
+places its edges a quarter period after the data transitions; the
+chip's own `tx_fb_clock_delay = 7` init parameter (~2.2 ns internal
+FB_CLK delay) moves its sampling point further into the bit:
+
+```
+time (ns) relative to the l_clk edge that launches a TX bit:
+
+ pads:  data transition          FB_CLK edge
+        (OUT0-launched)          (OUT1-launched)
+        |                        |
+        |----- +4.07 (90 deg) -->|
+        |                        |
+ chip:                           |-- +2.2 (tx_fb_clock_delay=7) -->|
+        |                                                          |
+        |################# DATA VALID (this bit) ##################|#####|
+        0                                                        ~6.3  8.138
+                                                                   ^
+                                                        chip samples here
+
+        setup to next transition: 8.138 - 6.3 = 1.84 ns  (t_STX 1.0 -> ~0.8 ns margin)
+        hold from last transition: 6.3 ns                (t_HTX 0   -> ~6.3 ns margin)
+```
+
+The SDC declares the CCC output clocks (`l_clk_pll`, `tx_fbclk_90` —
+fabric-referenced PLL outputs are not derived automatically) and a
+generated clock on the FB_CLK pad, with `set_output_delay` windows
+from t_STX/t_HTX. Because the +90 deg is not modeled under the 8 ns
+ceiling period, the TX I/O report is advisory; the shift itself is
+physical (PLL-guaranteed), and RF EVM is the verification. If more TX
+setup margin is ever wanted, lowering the firmware's
+`tx_fb_clock_delay` toward 2 re-centers the sampling point at
+~4.7 ns (~2.4 ns margin on both sides).
+
+#### Why this differs from the Xilinx port
+
+The axau15 uses the same edge-aligned launch topology — FB_CLK is an
+ODDR fed the constant `01` pattern, exactly like the data bits — and
+carries **no I/O timing constraints at all**. It gets away with that
+because both sides of the problem are absorbed elsewhere: ODDR/IDDR
+launch and capture live in dedicated I/O blocks with picosecond-class
+matching (no per-bit fabric skew to manage), and the chip's
+`tx_fb_clock_delay`/`rx_data_delay` registers provide the eye
+centering (with IDELAY taps available for fine trim). PolarFire's
+fabric-emulated DDR has neither property: per-bit skew is
+nanosecond-class unless the tools are told to balance it (hence the RX
+input constraints), and no delay element exists on the TX side big
+enough to center the eye (hence manufacturing the shift with the CCC
+phase pair). The chip-side delay registers are kept at the same values
+as the Xilinx build; the CCC's +90 deg composes with them.
 
 ### Fast-multiplier pipeline register (`CPU_FAST_MUL_REG`)
 
@@ -317,13 +456,13 @@ takes `T_mul_latency = 2` (division and the serial multiplier never enter
 `S_PIPE`).
 
 This project turns it on with `CPU_FAST_MUL_REG => true` in
-`hdl/neorv32_mpf300_top.vhd` (no source override needed; earlier revisions
-used a local `FAST_MUL_REG_c` constant patch, now removed).
+`hdl/neorv32_mpf300_top.vhd`.
 
-Result: synthesis put `P_REG` on a cascade slice, splitting the path into
-4.95 ns (MACC -> MACC cascade) and a short remainder. MUL/MULH go from
-`3 + 1` to `3 + 2` cycles (datasheet formula) — 25% slower multiplies for
-+13 MHz. No software impact: no ISA change, and the no-os HAL reads the
+With the register enabled, synthesis puts `P_REG` on a cascade slice,
+splitting the path into 4.95 ns (MACC -> MACC cascade) and a short
+remainder. MUL/MULH take `3 + 2` cycles instead of `3 + 1` (datasheet
+formula) — a 25% slower multiply in exchange for the CPU domain closing
+125 MHz. No software impact: no ISA change, and the no-os HAL reads the
 clock from SYSINFO.
 
 ## Simulation

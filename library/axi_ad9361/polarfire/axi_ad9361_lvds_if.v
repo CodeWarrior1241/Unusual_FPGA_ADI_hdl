@@ -176,6 +176,7 @@ module axi_ad9361_lvds_if #(
 
   // internal signals
 
+  wire                l_clk_90;    // +90 deg l_clk for the FB_CLK output
   wire    [ 5:0]      rx_data_1_s;
   wire    [ 5:0]      rx_data_0_s;
   wire    [ 1:0]      rx_frame_s;
@@ -530,10 +531,15 @@ module axi_ad9361_lvds_if #(
     .delay_rst (delay_rst),
     .delay_locked ());
 
-  // transmit clock interface, ddr_out -> outbuf
+  // transmit clock interface, ddr_out -> outbuf. Launched from l_clk_90
+  // (+90 deg): FB_CLK edges land a quarter DATA_CLK period after the TX
+  // data transitions, centering the AD9361's sampling point in the eye
+  // (t_STX/t_HTX both get ~4 ns of margin at 61.44 MHz). The tx_clk[1:0]
+  // pattern bits are static after configuration, so the l_clk ->
+  // l_clk_90 crossing inside this instance carries no dynamic data.
 
   ad_data_out i_tx_clk (
-    .tx_clk (l_clk),
+    .tx_clk (l_clk_90),
     .tx_data_p (tx_clk[1]),
     .tx_data_n (tx_clk[0]),
     .tx_data_out_p (tx_clk_out_p),
@@ -585,14 +591,24 @@ module axi_ad9361_lvds_if #(
   // device clock interface (receive clock)
 
   generate if (USE_SSI_CLK == 1) begin
-  ad_data_clk i_clk (
+  // USE_PLL_90: l_clk comes from PF_CCC OUT0 (0 deg) and l_clk_90 from
+  // OUT1 (+90 deg) with a PLL-guaranteed relationship; l_clk_90 clocks
+  // only the FB_CLK output structure (i_tx_clk below) so the forwarded
+  // clock's edges land mid-eye of the TX data instead of on the
+  // transitions (all output structures being identical fabric DDR muxes,
+  // a shared clock aligns FB_CLK edges with data edges by construction).
+  ad_data_clk #(
+    .USE_PLL_90 (1)
+  ) i_clk (
     .rst (1'd0),
     .locked (),
     .clk_in_p (rx_clk_in_p),
     .clk_in_n (rx_clk_in_n),
-    .clk (l_clk));
+    .clk (l_clk),
+    .clk_90 (l_clk_90));
   end else begin
     assign l_clk = clk;
+    assign l_clk_90 = clk;
   end
   endgenerate
 

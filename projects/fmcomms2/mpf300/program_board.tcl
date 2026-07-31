@@ -53,6 +53,14 @@
 # "Segmentation fault" right after the "Reading file ..." lines, just run
 # the script again.
 #
+# Known refusal: PROGRAMDEVICE can fail instantly with "Bitstream
+# programming action is disabled" (EXPORT ERROR_CODE 804f, EXIT -38) even
+# though the scan chain passes -- a stuck System Controller programming
+# state, seen after repeated program/power cycles. Remedy: power-cycle the
+# board (DEVRST clears it), then rerun; a retry without the power-cycle
+# fails the same way. Nothing is written before the refusal, so the
+# on-device design is untouched.
+#
 # SPI flash prerequisite: build_all.tcl must have run with cfg/spiflash.cfg
 # present (ships in the repo), which configures the SPI Flash memory map and
 # generates the flash image in batch mode. The cfg carries a 256-byte

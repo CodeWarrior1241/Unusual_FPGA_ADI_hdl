@@ -489,6 +489,29 @@ proc build_all {} {
         "PLL_IN_FREQ_0:50" \
     }
 
+    # TX FB_CLK phase pair, instantiated INSIDE the polarfire device
+    # interface (library/axi_ad9361/polarfire/common/ad_data_clk.v with
+    # USE_PLL_90=1 references component PF_CCC_C1 by name): OUT0 = l_clk at
+    # 0 deg, OUT1 = +90 deg for the forwarded FB_CLK only. Post-VCO
+    # feedback guarantees the OUT0/OUT1 relationship; +90 deg centers the
+    # AD9361's TX sampling edges in the data eye (see the lvds_if comment).
+    puts "INFO: Generating PF_CCC_C1 (61.44 MHz DATA_CLK -> 0/90 deg pair)..."
+    create_and_configure_core -core_vlnv Actel:SgCore:PF_CCC:$PF_CCC_version \
+        -component_name {PF_CCC_C1} -params {\
+        "GL0_0_IS_USED:true" \
+        "GL0_0_FABCLK_USED:true" \
+        "GL0_0_OUT_FREQ:61.44" \
+        "GL0_0_PLL_PHASE:0" \
+        "GL1_0_IS_USED:true" \
+        "GL1_0_FABCLK_USED:true" \
+        "GL1_0_OUT_FREQ:61.44" \
+        "GL1_0_PLL_PHASE:90" \
+        "GL0_1_IS_USED:false" \
+        "GL2_0_IS_USED:false" \
+        "GL3_0_IS_USED:false" \
+        "PLL_IN_FREQ_0:61.44" \
+    }
+
     puts "INFO: Generating PF_INIT_MONITOR..."
     create_and_configure_core \
         -core_vlnv Actel:SgCore:PF_INIT_MONITOR:$PF_INIT_MONITOR_version \
