@@ -24,13 +24,16 @@
 #     are replaced by the blocks in ./hdl, built on third-party open-source
 #     components in deps/:
 #       axi_1to3_decoder  -> PULP axi_lite_xbar        (deps/axi)
-#       axis_async_fifo   -> open-logic olo_base_fifo_async (deps/open-logic,
-#                            VHDL; 512x41 -> 2x LSRAM per FIFO, see the
-#                            BRAM-strip note in hdl/axis_async_fifo.v)
+#       axis_async_fifo   -> Bedrock-RTL br_cdc_fifo_ctrl_1r1w
+#                            (deps/bedrock-rtl, SV; 512x41 -> 2x LSRAM per
+#                            FIFO, see the BRAM-strip note in
+#                            hdl/axis_async_fifo.v)
 #       sys_ctrl,
-#       lclk_reset_sync   -> open-logic olo_base_reset_gen / olo_base_cc_bits
-#                                                      (deps/open-logic, VHDL)
+#       lclk_reset_sync   -> mpf300_reset_gen (project SV) + Bedrock-RTL
+#                            br_cdc_bit_toggle (deps/bedrock-rtl)
 #       axi_bram_32k, dac_hold, refclk_ibuf: project-local plain HDL
+#     (open-logic VHDL replaced by Bedrock-RTL SV — see
+#      doc/MPF300-Splash-Kit/bedrock_migration_design.md)
 #   - The generated Libero project lands in ./proj (rebuilt every run).
 #
 # IP vault: PF_CCC / PF_INIT_MONITOR are generated from the offline
@@ -155,6 +158,7 @@ variable helper_files {
     axi_1to3_decoder.sv
     axi_bram_32k.v
     axis_async_fifo.v
+    mpf300_reset_gen.sv
     sys_ctrl.v
     lclk_reset_sync.v
     dac_hold.v
@@ -162,8 +166,9 @@ variable helper_files {
 }
 
 # PULP platform components (deps/common_cells v1.39.0, deps/axi v0.39.10):
-# the AXI-Lite crossbar behind axi_1to3_decoder and the gray-code CDC FIFO
-# behind axis_async_fifo. SystemVerilog, compiled into library work.
+# the AXI-Lite crossbar behind axi_1to3_decoder. SystemVerilog, compiled
+# into library work. (sync/gray/cdc_fifo_gray are unused since the CDC
+# FIFO moved to open-logic and now Bedrock-RTL; kept imported, harmless.)
 
 variable pulp_common_cells_files {
     cf_math_pkg.sv
@@ -193,20 +198,44 @@ variable pulp_axi_files {
     axi_lite_xbar.sv
 }
 
-# open-logic components (deps/open-logic, VHDL): reset generation and the
-# pwr_dn bit synchronizer behind sys_ctrl / lclk_reset_sync.
+# Bedrock-RTL components (deps/bedrock-rtl, SystemVerilog): the CDC FIFO
+# controller behind axis_async_fifo, the pwr_dn bit synchronizer behind
+# lclk_reset_sync, and the cross-domain reset synchronizer. Dependency
+# order (packages/leaves first) — the same list as the Questa compile.do
+# and the Verilator Makefile.
 
-variable olo_files {
-    olo_base_pkg_attribute.vhd
-    olo_base_pkg_array.vhd
-    olo_base_pkg_math.vhd
-    olo_base_pkg_logic.vhd
-    olo_base_pkg_string.vhd
-    olo_base_cc_bits.vhd
-    olo_base_cc_reset.vhd
-    olo_base_ram_sdp.vhd
-    olo_base_reset_gen.vhd
-    olo_base_fifo_async.vhd
+variable bedrock_files {
+    pkg/br_math_pkg.sv
+    gate/rtl/br_gate_mock.sv
+    misc/rtl/br_misc_unused.sv
+    misc/rtl/br_misc_tieoff_zero.sv
+    misc/rtl/br_misc_tieoff_one.sv
+    cdc/rtl/br_cdc_pkg.sv
+    cdc/rtl/br_cdc_bit_toggle.sv
+    counter/rtl/br_counter_incr.sv
+    flow/rtl/internal/br_flow_checks_valid_data_intg.sv
+    fifo/rtl/internal/br_fifo_push_ctrl_core.sv
+    enc/rtl/br_enc_bin2gray.sv
+    delay/rtl/br_delay_nr.sv
+    cdc/rtl/internal/br_cdc_fifo_reset_overlap_checks.sv
+    enc/rtl/br_enc_gray2bin.sv
+    cdc/rtl/internal/br_cdc_fifo_push_flag_mgr.sv
+    cdc/rtl/internal/br_cdc_fifo_push_ctrl.sv
+    cdc/rtl/internal/br_cdc_fifo_gray_count_sync.sv
+    cdc/rtl/br_cdc_fifo_ctrl_push_1r1w.sv
+    cdc/rtl/internal/br_cdc_fifo_pop_flag_mgr.sv
+    delay/rtl/br_delay_valid.sv
+    delay/rtl/br_delay_shift_reg.sv
+    counter/rtl/br_counter.sv
+    flow/rtl/internal/br_flow_checks_valid_data_impl.sv
+    flow/rtl/br_flow_reg_fwd.sv
+    mux/rtl/br_mux_onehot.sv
+    fifo/rtl/internal/br_fifo_staging_buffer.sv
+    fifo/rtl/internal/br_fifo_pop_ctrl_core.sv
+    cdc/rtl/internal/br_cdc_fifo_pop_ctrl.sv
+    cdc/rtl/br_cdc_fifo_ctrl_pop_1r1w.sv
+    cdc/rtl/br_cdc_fifo_ctrl_1r1w.sv
+    cdc/rtl/br_cdc_rst_sync.sv
 }
 
 ###############################################################################
@@ -256,7 +285,7 @@ proc build_all {} {
     global axi_streaming_adapter cdc_tx_fifo cdc_rx_fifo
     global repo_root lib_dir ip_dir neorv32_home hls_ad9361_dir hls_stream_dir
     global common_files core_files pf_files helper_files
-    global pulp_common_cells_files pulp_axi_files olo_files
+    global pulp_common_cells_files pulp_axi_files bedrock_files
 
     puts ""
     puts "==============================================================================="
@@ -456,11 +485,39 @@ proc build_all {} {
         file copy -force $f $proj_dir/hdl/common_cells/
     }
 
-    # open-logic sources (VHDL, library work)
-    puts "INFO: Importing open-logic base components..."
-    foreach f $olo_files {
-        import_files -hdl_source $repo_root/deps/open-logic/src/base/vhdl/$f
+    # Bedrock-RTL sources (SystemVerilog, library work). The macro headers
+    # are included by bare filename (`include "br_registers.svh" etc.), so
+    # they are staged flat into proj/hdl (the Libero hierarchy parser and
+    # Synplify both resolve includes next to the including file; the
+    # Synplify -include_path below is belt-and-suspenders).
+    # Bedrock-RTL: same hazards the PULP amalgamation above works around --
+    # Libero derives the synthesis fileset (and its order) from the module
+    # instantiation hierarchy, not from the import list; a bare-package
+    # file has no node in that graph, so br_math is silently DROPPED and
+    # Synplify fails downstream with CG707 "Could not find function". All
+    # Bedrock sources are therefore amalgamated into one file in
+    # dependency order. BR_PPA_SYNTHESIS is defined at the top: br_gate_mock.sv
+    # otherwise static-asserts under `ifdef SYNTHESIS (upstream expects
+    # ASIC users to swap in vendor std cells; the behavioral gate models --
+    # flop chains and assigns -- are exactly what FPGA inference wants).
+    puts "INFO: Importing Bedrock-RTL components (amalgamated)..."
+    foreach f [glob $repo_root/deps/bedrock-rtl/macros/*.svh] {
+        file copy -force $f $proj_dir/hdl/
     }
+    set bedrock_all $proj_dir/bedrock_sources.sv
+    set fo [open $bedrock_all w]
+    puts $fo "// Generated by build_all.tcl -- amalgamated Bedrock-RTL sources"
+    puts $fo "// (deps/bedrock-rtl). Do not edit; edit the bedrock_files list"
+    puts $fo "// in build_all.tcl instead."
+    puts $fo "`define BR_PPA_SYNTHESIS"
+    foreach f $bedrock_files {
+        set fi [open $repo_root/deps/bedrock-rtl/$f r]
+        puts $fo "\n// ==== bedrock-rtl/$f ====\n"
+        puts $fo [read $fi]
+        close $fi
+    }
+    close $fo
+    import_files -hdl_source $bedrock_all
 
     # project-local helper blocks
     puts "INFO: Importing helper HDL..."
@@ -818,7 +875,7 @@ proc build_all {} {
     # to the real top-level mapping anyway. A single mapper job maps the whole
     # design (IMEM in RAM1K20s) in well under a minute.
     configure_tool -name {SYNTHESIZE} \
-        -params "SYNPLIFY_OPTIONS:set_option -hdl_define -set MEM_INIT_DIR=\"$proj_dir/mem_init/\"; set_option -rom_map_logic 0; set_option -retiming 1; set_option -report_path 200; set_option -automatic_compile_point 0; set_option -include_path \"$repo_root/deps/axi/include;$repo_root/deps/common_cells/include\""
+        -params "SYNPLIFY_OPTIONS:set_option -hdl_define -set MEM_INIT_DIR=\"$proj_dir/mem_init/\"; set_option -rom_map_logic 0; set_option -retiming 1; set_option -report_path 200; set_option -automatic_compile_point 0; set_option -include_path \"$repo_root/deps/axi/include;$repo_root/deps/common_cells/include;$repo_root/deps/bedrock-rtl/macros\""
 
     # high-effort timing-driven P&R (default effort left ~1.1 ns on the
     # MACC->regfile path; most of that is in-macro delay, this buys the rest)

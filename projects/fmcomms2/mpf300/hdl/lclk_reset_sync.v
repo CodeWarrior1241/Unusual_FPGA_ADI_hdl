@@ -5,18 +5,17 @@
 // datapath and the RX CDC FIFO, held while the system reset is asserted OR
 // software power-down is active.
 //
-// Built from open-logic components (deps/open-logic, VHDL):
-//   - olo_base_cc_bits carries pwr_dn from the 125 MHz domain into l_clk
-//     (the only project-authored CDC, same as axau15). SyncStages_g=4
-//     keeps the 4-stage depth of the hand-rolled synchronizer this
-//     replaces.
-//   - olo_base_reset_gen filters (system reset | pwr_dn) into an l_clk
-//     synchronous reset with an 8-cycle minimum pulse, matching the
-//     8-stage shift register it replaces.
-//
-// The 125 MHz source clock is a new input (clk_125) — olo_base_cc_bits
-// registers the crossing signal in its source domain before the
-// synchronizer chain, which the hand-rolled 4-flop version did not.
+// Built from Bedrock-RTL (deps/bedrock-rtl, SystemVerilog) plus the
+// project-local reset generator (both replacing open-logic VHDL — see
+// doc/MPF300-Splash-Kit/bedrock_migration_design.md):
+//   - br_cdc_bit_toggle carries pwr_dn from the 125 MHz domain into l_clk
+//     (the only project-authored CDC, same as axau15). NumStages=4 keeps
+//     the 4-stage depth of the hand-rolled synchronizer this replaces;
+//     AddSourceFlop=1 keeps the source-domain register olo_base_cc_bits
+//     added over the original hand-rolled 4-flop version.
+//   - mpf300_reset_gen filters (system reset | pwr_dn) into an l_clk
+//     synchronous reset with an 8-cycle minimum pulse, mirroring
+//     olo_base_reset_gen exactly.
 // ***************************************************************************
 
 `timescale 1ns/100ps
@@ -32,31 +31,28 @@ module lclk_reset_sync (
   output          lclk_reset        // active high (SmartHLS adapter)
 );
 
-  wire [0:0] pwr_dn_in;
-  wire [0:0] pwr_dn_lclk;
+  wire pwr_dn_lclk;
 
-  assign pwr_dn_in = pwr_dn;
-
-  olo_base_cc_bits #(
-    .Width_g      (1),
-    .SyncStages_g (4)
+  br_cdc_bit_toggle #(
+    .NumStages     (4),
+    .AddSourceFlop (1)
   ) i_pwr_dn_cc (
-    .In_Clk   (clk_125),
-    .In_Rst   (1'b0),
-    .In_Data  (pwr_dn_in),
-    .Out_Clk  (l_clk),
-    .Out_Rst  (1'b0),
-    .Out_Data (pwr_dn_lclk)
+    .src_clk (clk_125),
+    .src_rst (1'b0),
+    .src_bit (pwr_dn),
+    .dst_clk (l_clk),
+    .dst_rst (1'b0),
+    .dst_bit (pwr_dn_lclk)
   );
 
-  wire rst_src = ~ext_resetn | pwr_dn_lclk[0];   // active high
+  wire rst_src = ~ext_resetn | pwr_dn_lclk;      // active high
 
-  olo_base_reset_gen #(
-    .RstPulseCycles_g (8)
+  mpf300_reset_gen #(
+    .RST_PULSE_CYCLES (8)
   ) i_reset_gen (
-    .Clk    (l_clk),
-    .RstIn  (rst_src),
-    .RstOut (lclk_reset)
+    .clk     (l_clk),
+    .rst_in  (rst_src),
+    .rst_out (lclk_reset)
   );
 
   assign lclk_resetn = ~lclk_reset;

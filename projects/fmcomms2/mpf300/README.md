@@ -563,3 +563,266 @@ make clean && make          # prints TEST PASSED
 
 The axi_ad9361 PolarFire device interface is covered separately by the
 QuestaSim loopback TB in `deps/hdl/library/axi_ad9361/sim/microchip`.
+
+## Libero Awkwardness
+
+A catalog of issues encountered on this project that are not design bugs
+but Microchip tooling behaving in unexpected and inconvenient ways —
+kept here so the next person greps this file before losing an afternoon.
+Each entry: (a) the issue, (b) how it manifests, (c) how it was
+rectified here, (d) whether the equivalent exists in the Vivado/Vitis
+flow this project was ported from (`projects/fmcomms2/axau15`).
+
+### 1. The `SYNPLIFY_OPTIONS` parser silently discards its entire payload
+
+**a. Issue.** `configure_tool -name {SYNTHESIZE} -params
+"SYNPLIFY_OPTIONS:…"` does not splice text into the generated Synplify
+project verbatim. Libero parses each `set_option` statement into its own
+parameter store and *re-serializes* it when writing
+`proj/synthesis/Top_syn.prj` (observable: it adds brace-wrapping we
+never wrote). Any statement its parser cannot digest — e.g. a
+brace-quoted multi-token `-hdl_define -set {A="x" B}` value, which is
+*valid Synplify Tcl* — causes it to discard the **whole** options
+string, every statement, with **zero diagnostics**; `configure_tool`
+returns success.
+
+**b. Manifestation.** The generated `Top_syn.prj` quietly reverts to
+Libero defaults: `-retiming 0`, `-rom_map_logic 1`,
+`-automatic_compile_point 1`. In this design that alone would rebuild
+the 128 KB NEORV32 IMEM as a ~57k-LUT mux tree (see the Status/timing
+section) — a catastrophic outcome from a cosmetic-looking option edit,
+discovered only because an unrelated error prompted a diff of the
+generated prj.
+
+**c. Rectification.** Keep `SYNPLIFY_OPTIONS` statements to simple
+single-token values (the one escaped-quote `MEM_INIT_DIR` form is the
+proven ceiling). Anything needing quoting or multiple values goes into
+source instead — the Bedrock `` `define BR_PPA_SYNTHESIS `` rides at
+the top of the amalgamated `bedrock_sources.sv`. After *any* change to
+the options string, grep `proj/synthesis/Top_syn.prj` (or Synplify's
+`run_options.txt`) to confirm every option actually arrived.
+
+**d. Vivado comparison.** Would not have happened. Vivado synthesis
+options are Tcl properties (`set_property
+STEPS.SYNTH_DESIGN.ARGS.* …`, `verilog_define` as a real Tcl list on
+the fileset) validated at `set_property` time — an invalid value errors
+immediately, and there is no free-text re-parse step to fail silently.
+
+### 2. The synthesis fileset is derived from the instantiation hierarchy — bare SV package files are silently dropped
+
+**a. Issue.** Libero does not hand Synplify your import list. On
+`build_design_hierarchy` it parses every imported HDL file, builds a
+**module instantiation graph** from the design root, and generates the
+Synplify fileset from that graph — both membership and file order
+(leaf-to-root dependency order; import order is irrelevant). A file
+containing only a SystemVerilog `package` defines no module, and SV
+`import`/`::` references are not tracked as graph edges — so the file
+is read during the audit (it shows the same `Reading file` lines as
+every module file), produces **no warning**, and never reaches
+Synplify.
+
+**b. Manifestation.** Synplify fails far from the cause:
+`CG707 "Could not find function"` at the first
+`some_pkg::function()` call inside a dependent module — here
+`br_math::max2()` in Bedrock-RTL's `br_cdc_fifo_push_flag_mgr.sv`,
+three files removed from the dropped `br_math_pkg.sv`. This project hit
+the identical trap earlier with PULP's `cf_math_pkg.sv`/`axi_pkg.sv`.
+
+**c. Rectification.** Amalgamation: concatenate each package-bearing
+library into one generated file, packages first, in dependency order
+(`pulp_sources.sv`, `bedrock_sources.sv` in `build_all.tcl`). This
+fixes membership (the merged file defines plenty of instantiated
+modules), order (packages are physically first), and gives compile-unit
+defines a guaranteed home. `organize_tool_files -tool {SYNTHESIZE}`
+exists as the official override but is all-or-nothing and leaves
+ordering unspecified.
+
+**d. Vivado comparison.** Would not have happened. Vivado keeps an
+explicit user-owned fileset (`add_files`); package-only `.sv` files
+stay in it, and `update_compile_order` understands package dependencies
+when ordering compilation. The PULP and Bedrock trees compile in Vivado
+unmodified.
+
+### 3. Batch-mode segfault in SPI-flash image generation (GUI dialog through a NULL window pointer)
+
+**a. Issue.** Libero 2025.2's SPI-flash image flow raises a **GUI
+dialog** ("There are no SPI Flash clients selected for programming")
+when the SPI Flash client list is empty. In batch mode there is no main
+window, so the dialog call dereferences a NULL window pointer and the
+whole process dies with a segmentation fault — for a condition that is
+merely a configuration state, in a flow that is explicitly supported
+headless.
+
+**b. Manifestation.** `run_libero.sh SCRIPT:… ` dies with
+`Segmentation fault` during design-initialization / flash-image
+generation, no Tcl-level error, no actionable message. Trivially
+reproducible whenever `cfg/spiflash.cfg` defines no clients yet.
+
+**c. Rectification.** `cfg/spiflash.cfg` ships a **256-byte
+`STATIC_FILL` placeholder client at 0x100000** — it writes the flash's
+erased state, so it is electrically inert, but it keeps the client list
+non-empty and the dialog code path unreached. Documented in
+`program_board.tcl`.
+
+**d. Vivado comparison.** No equivalent failure class. The Vivado
+counterpart (`write_cfgmem`) is a pure CLI command: an empty/invalid
+configuration produces a textual error and a nonzero exit. Vivado batch
+mode does not route error reporting through GUI dialog code.
+
+### 4. SmartHLS falls apart on HLS compile times (and crashes) for bus-slave interfaces
+
+**a. Issue.** SmartHLS 2025.2 has no equivalent of Vitis HLS's
+template-generated `s_axilite` decoder; both of its AXI slave options
+route through the scheduler with pathological results:
+`type(axi_target)` arbitrates every HLS-side access through a shared
+2-cycle memory port (II=2 floor) and its load→FIFO-write path crashes
+the scheduler outright (`findRecurrencePathFailure`); `type(axi_slave)`
+generates the address decoder as C++ that **enumerates all 2054 words
+of the register map**, and scheduling it takes hours — ~2 h for the
+write decoder, the read decoder still unfinished after **9+ hours** —
+for a bridge whose Vitis equivalent builds in seconds.
+
+**b. Manifestation.** `shls -a hw` appears hung; the scheduler is
+grinding a combinatorially enumerated decoder. Nothing in the report
+points at the interface choice as the cause.
+
+**c. Rectification.** Hand-write the AXI slave in user C++ over the raw
+AXI channel structs (`hls/axi_interface.hpp`) with computed address
+decoding (three range compares + a RAM index) — SmartHLS then groups
+the channels into a proper AXI4 slave bus in RTL. Result: II=1 at the
+target clock and `shls -a hw` in **under 10 seconds**, with the
+register map byte-identical to the Vitis IP. Three scheduler-shape
+rules (blocking writes for read-dependent payloads, one if/else access
+chain per RAM, one write call site per FIFO) are documented in
+`src/axi_lite_to_streaming_adapter_microchip/README.md`.
+
+**d. Vivado/Vitis comparison.** Did not happen there. Vitis HLS emits
+`s_axilite` as a template RTL decoder — constant generation time
+regardless of map size — and the identical design (same C++, same
+register map) built in seconds in the axau15 flow.
+
+### 5. Intermittent batch-mode segfault on project open
+
+**a. Issue.** Libero 2025.2 batch mode occasionally segfaults while
+*re-opening* an existing project, during the open-time HDL file audit —
+before the script's first action runs.
+
+**b. Manifestation.** A `program_board.tcl` (or any re-open) run dies
+with `Segmentation fault` immediately after the `Reading file '…'`
+lines. Intermittent; the same invocation succeeds on retry.
+
+**c. Rectification.** None available — just rerun the script.
+Documented in `program_board.tcl` so the retry is a known move, not a
+debugging session.
+
+**d. Vivado comparison.** Not observed in the axau15 flow; headless
+`open_project` there has been reliable across the same repository
+lifetime.
+
+### 6. `PROGRAMDEVICE` refuses with "Bitstream programming action is disabled" (ERROR_CODE 804f)
+
+**a. Issue.** After repeated program/power cycles the PolarFire System
+Controller can latch a state in which programming is refused instantly
+— scan chain still passes — with EXPORT `ERROR_CODE 804f`, EXIT -38.
+
+**b. Manifestation.** `Executing action PROGRAM` fails in under a
+second; a plain retry fails identically. Nothing is written, so the
+on-device design is untouched.
+
+**c. Rectification.** Power-cycle the board (DEVRST clears the stuck
+state), then rerun. Documented in `program_board.tcl`.
+
+**d. Vivado comparison.** Xilinx configuration has its own transient
+programming failures, but a device-side latched refusal requiring a
+power cycle has no direct analogue in the axau15 flow — JTAG
+configuration there recovers with a cable reset from the host.
+
+### 7. Automatic compile points silently ignore ROM-mapping attributes
+
+**a. Issue.** Libero's default Synplify multiprocessing flow
+(`-automatic_compile_point 1`) carves the design into compile points
+and re-maps the enclosing top inside a compile-point context in which
+ROM→LSRAM extraction (and the `syn_romstyle` attribute) is ignored.
+
+**b. Manifestation.** The 128 KB NEORV32 IMEM rebuilds as a ~57k-LUT
+mux tree, retimes for 30+ minutes — and that netlist then *loses* to
+the real top-level mapping anyway. Wwasted runtime with a
+misleading resource blowup mid-log.
+
+**c. Rectification.** `set_option -automatic_compile_point 0` (with
+`-rom_map_logic 0`); a single mapper job maps the whole design, IMEM in
+RAM1K20s, in well under a minute. See the comment block in
+`build_all.tcl`.
+
+**d. Vivado comparison.** Would not have happened. Vivado's default
+flow has no automatic partitioning (OOC is explicit per-IP), and
+`rom_style`/`ram_style` attributes are honored in every context.
+
+### 8. Passing flows print `Error:`-severity lines (sNVM design-init first pass)
+
+**a. Issue.** During design-initialization generation the first pass
+places init clients in sNVM, prints two hard `Error: The SNVM
+configuration has the following errors:` blocks (client overlap, end
+page 1044 out of a 0–220 range) — and then the flow *retargets the RAM
+clients to SPI flash, regenerates, and completes successfully*. The
+errors describe a transient intermediate state, at Error severity.
+
+**b. Manifestation.** Any log-scraping automation keyed on `Error`
+flags a passing build; a human reading the log gets two heart attacks
+per build. (This build's `EXPORT_OK` gate greps for the script's own
+milestone markers instead, precisely because of this.)
+
+**c. Rectification.** Treat Libero log severity as advisory; gate
+automation on explicit milestone markers echoed by the build script
+(`MPF300_FMCOMMS2_SYNTH_OK` / `_PNR_OK` / `_EXPORT_OK`).
+
+**d. Vivado comparison.** Vivado's message system severities are
+dependable (a passing flow does not emit `ERROR:`), and grep-based CI
+on them is standard practice.
+
+### 9. Synplify optimizes away plain `CLKINT` buffers, reinstating dedicated-routing DRCs
+
+**a. Issue.** A clock that must reach a CCC through the fabric global
+network (because its pin is not a CCC-function pin — the FMC pinout
+dictates this for DATA_CLK) needs an explicit fabric buffer. Synplify
+optimizes a plain `CLKINT` away, after which P&R re-applies the
+dedicated-routing rule and errors.
+
+**b. Manifestation.** P&R fails with `PDCPF-13` even though the RTL
+explicitly instantiates the buffer the error asks for.
+
+**c. Rectification.** Use `CLKINT_PRESERVE` (see
+`library/axi_ad9361/polarfire/common/ad_data_clk.v` and the project
+refclk — same idiom in both places).
+
+**d. Vivado comparison.** Ehh... Vivado keeps explicitly instantiated
+`BUFG`s, and the equivalent pin-placement DRC offers a documented
+per-net override (`CLOCK_DEDICATED_ROUTE FALSE`) rather than requiring
+a special preserved primitive variant.
+
+### 10. Generated-core simulation models live in disposable project output (and are Questa-locked)
+
+**a. Issue.** Simulation models for Libero-generated cores (PF_CCC,
+PF_INIT_MONITOR, …) are emitted into the regenerated-every-build
+`proj/` tree rather than a stable library, and the sophisticated hard
+IP underneath (transceiver PCS/PMA, and effectively the CCC's guts) is
+available only as encrypted/precompiled ModelSim/Questa libraries — no
+open-tool path. (Related: `new_project` rejects wrong die names with an
+error message whose list of accepted names includes neither `MPF300T`
+nor `MPF300TS_ES`, both of which are accepted.)
+
+**b. Manifestation.** Self-contained simulations break every time
+`proj/` is regenerated, and Verilator cannot consume the vendor models
+at all.
+
+**c. Rectification.** Behavioral stand-ins maintained with the
+testbenches: `pf_ccc_sim.v` (+ `PF_CCC_C1`, `pf_init_monitor_sim`) for
+Questa, `pf_ccc_behavioral.sv` for Verilator. See
+`doc/MPF300-Splash-Kit/bedrock_migration_design.md` and the Verilator
+sim READMEs.
+
+**d. Vivado comparison.** This is similar in Vivado. Vivado emits unencrypted
+behavioral sim netlists for clocking IP into the managed IP output
+(stable location), so the Xilinx datapath sims consume them directly;
+for serdes hard IP, Xilinx SecureIP is encrypted just like Microchip's
+XCVR models — that particular lock-in is industry-wide.

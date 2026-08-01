@@ -4,13 +4,15 @@
 // power-down gating logic (pwr_dn_inv / pwr_dn_aresetn_gate) and the GPIO
 // xlslice fan-out cells:
 //
-//   - reset generation: open-logic olo_base_reset_gen (deps/open-logic,
-//     VHDL) — synchronizer-filtered reset from PLL lock, PF_INIT_MONITOR
-//     device init done, and the board's PF_USER_RESET push-button (active
-//     low). RstPulseCycles_g=8 keeps the 8-cycle minimum pulse of the
-//     shift-register implementation this replaces; olo asserts synchronously
-//     (registers power up in reset via the PolarFire initialization flow,
-//     so an async assert path is not needed) and releases synchronously.
+//   - reset generation: mpf300_reset_gen (project SV mirror of open-logic
+//     olo_base_reset_gen; see doc/MPF300-Splash-Kit/
+//     bedrock_migration_design.md) — synchronizer-filtered reset from PLL
+//     lock, PF_INIT_MONITOR device init done, and the board's
+//     PF_USER_RESET push-button (active low). RST_PULSE_CYCLES=8 keeps
+//     the 8-cycle minimum pulse of the shift-register implementation this
+//     replaces; the output asserts synchronously (registers power up in
+//     reset via the PolarFire initialization flow, so an async assert
+//     path is not needed) and releases synchronously.
 //   - pwr_dn = gpio_o[8]: software low-power lever; aresetn_gated =
 //     sys_resetn & ~pwr_dn holds axi_ad9361's register domain and the TX
 //     CDC FIFO in reset while powered down (axau15 plan B.3)
@@ -55,15 +57,14 @@ module sys_ctrl (
   // init_done gates on.
   wire rst_src = ~(pll_lock & init_done & sram_init_done & ext_resetn);   // active high
 
-  // open-logic reset generator (VHDL entity; generic defaults except the
-  // pulse length: RstInPolarity_g='1' so rst_src is taken active-high,
-  // SyncStages_g=2)
-  olo_base_reset_gen #(
-    .RstPulseCycles_g (8)
+  // project reset generator (SV mirror of olo_base_reset_gen; rst_in is
+  // taken active-high, SYNC_STAGES=2 default)
+  mpf300_reset_gen #(
+    .RST_PULSE_CYCLES (8)
   ) i_reset_gen (
-    .Clk    (clk),
-    .RstIn  (rst_src),
-    .RstOut (sys_reset)
+    .clk     (clk),
+    .rst_in  (rst_src),
+    .rst_out (sys_reset)
   );
 
   assign sys_resetn = ~sys_reset;

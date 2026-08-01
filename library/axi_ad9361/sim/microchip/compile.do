@@ -126,8 +126,11 @@ set common_sources [list \
     "$common_dir/up_xfer_status.v" \
 ]
 
-# PolarFire device interface layer (replaces xilinx/common + xilinx/ files)
+# PolarFire device interface layer (replaces xilinx/common + xilinx/ files).
+# pf_ccc_c1_sim.v: behavioral stand-in for the Libero-generated PF_CCC_C1
+# that ad_data_clk.v (USE_PLL_90=1) instantiates by name.
 set pf_sources [list \
+    "$sim_dir/pf_ccc_c1_sim.v" \
     "$pf_common_dir/ad_data_clk.v" \
     "$pf_common_dir/ad_data_in.v" \
     "$pf_common_dir/ad_data_out.v" \
