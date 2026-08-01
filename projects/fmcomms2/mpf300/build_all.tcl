@@ -369,7 +369,13 @@ proc build_all {} {
     puts "INFO: Importing NEORV32 (VHDL, library neorv32)..."
     add_library -library {neorv32}
 
-    set fl [open "$neorv32_home/rtl/file_list_soc.f" r]
+    # file_list_soc.f was renamed to file_list_core.f upstream (PR #1611,
+    # post-v1.13.3); accept either name so the build survives the bump
+    set fl_path "$neorv32_home/rtl/file_list_soc.f"
+    if {![file exists $fl_path]} {
+        set fl_path "$neorv32_home/rtl/file_list_core.f"
+    }
+    set fl [open $fl_path r]
     set neorv32_files {}
     while {[gets $fl line] >= 0} {
         set line [string trim $line]

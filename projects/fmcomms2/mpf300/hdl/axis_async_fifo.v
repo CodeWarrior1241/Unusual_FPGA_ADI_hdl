@@ -30,9 +30,16 @@
 // and OR-ed in — asserting EITHER side flushes the whole FIFO, so the
 // axau15-style TX flush during power-down still needs only one side held.
 // Only the local resets are cross-coupled (cross-coupling the merged
-// resets would latch up through the synchronizers). Overlap is guaranteed
-// because every reset source in this design holds for >= 8 cycles
-// (mpf300_reset_gen) or the whole power-down window.
+// resets would latch up through the synchronizers).
+// The overlap itself is structural: br_cdc_rst_sync asserts the far-side
+// reset ASYNCHRONOUSLY on local assert and releases it only after the
+// synchronized delay FOLLOWING local deassert, so the far-side window
+// always brackets the local one. The >= 8-cycle stretch in
+// mpf300_reset_gen (RST_PULSE_CYCLES — the same pulse-prolong role
+// olo_base_reset_gen played) is the complementary half: it ensures the
+// destination domain reliably captures and sequences the assertion even
+// at worst-case clock ratios or with l_clk stopped (power-down holds
+// reset for the whole window).
 // ***************************************************************************
 
 `timescale 1ns/100ps
