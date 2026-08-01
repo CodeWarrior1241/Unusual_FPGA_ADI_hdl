@@ -481,7 +481,7 @@ the datapath.
                            +--------------------------------------------------+
 ```
 
-#### The fork: a wire versus a machine
+#### Xilinx vs Microchip distinction for clocking the I/O
 
 Both ports run the same Tier-0 sleep policy — put the chip down, never
 touch the fabric — with the same firmware sequence on the same chip.
@@ -569,7 +569,7 @@ QuestaSim loopback TB in `deps/hdl/library/axi_ad9361/sim/microchip`.
 A catalog of issues encountered on this project that are not design bugs
 but Microchip tooling behaving in unexpected and inconvenient ways —
 kept here so the next person greps this file before losing an afternoon.
-Each entry: (a) the issue, (b) how it manifests, (c) how it was
+Each entry: (a) the issue, (b) how it manifests, \(c) how it was
 rectified here, (d) whether the equivalent exists in the Vivado/Vitis
 flow this project was ported from (`projects/fmcomms2/axau15`).
 
