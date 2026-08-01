@@ -187,7 +187,6 @@ module axi_ad9361_lvds_if #(
 
   assign up_adc_drdata = 35'd0;
   assign up_dac_drdata = 50'd0;
-  assign locked_s = 1'b1;
 
   // drp interface signals
 
@@ -220,8 +219,14 @@ module axi_ad9361_lvds_if #(
 
   // adc-status
 
-  assign delay_locked = locked_s;
+  // delay_locked means "delay controller ready" to the no-os stack (the
+  // delay machinery is stubbed on PolarFire) -- kept tied high, NOT gated
+  // on the CCC lock, so software delay/tune semantics are unaffected.
+  assign delay_locked = 1'b1;
 
+  // locked_s is the PF_CCC lock (real PLL lock when USE_SSI_CLK, constant
+  // 1 otherwise); it reaches software through adc_status below, and drops
+  // while the AD9361 sleeps (DATA_CLK absent -> reference lost).
   always @(posedge l_clk) begin
     rx_locked_m1 <= locked_s;
     rx_locked <= rx_locked_m1;
@@ -601,7 +606,7 @@ module axi_ad9361_lvds_if #(
     .USE_PLL_90 (1)
   ) i_clk (
     .rst (1'd0),
-    .locked (),
+    .locked (locked_s),
     .clk_in_p (rx_clk_in_p),
     .clk_in_n (rx_clk_in_n),
     .clk (l_clk),
@@ -609,6 +614,7 @@ module axi_ad9361_lvds_if #(
   end else begin
     assign l_clk = clk;
     assign l_clk_90 = clk;
+    assign locked_s = 1'b1;
   end
   endgenerate
 

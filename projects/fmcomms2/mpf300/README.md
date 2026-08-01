@@ -434,6 +434,87 @@ enough to center the eye (hence manufacturing the shift with the CCC
 phase pair). The chip-side delay registers are kept at the same values
 as the Xilinx build; the CCC's +90 deg composes with them.
 
+### Power down / power up
+
+The `power_down`/`power_up` console commands park the datapath and put
+the chip in ENSM SLEEP with both LOs powered down; the fabric is never
+gated. Measured during power_down, the l_clk clock monitor reads
+**61439514 Hz** — unchanged from operation: this SLEEP sequence leaves
+the AD9361's DATA_CLK running, so the PF_CCC keeps its reference and
+never unlocks. The CCC lock is visible to software as
+`l_clk_pll_locked` in `get_adc_status` (fabric: `adc_status` = lock &&
+frame-ok), and `power_up` re-verifies the l_clk rate before resuming
+the datapath.
+
+```
+                        UART console: "power_down" / "power_up"
+                                        |
+                                        v
++--------------- NEORV32 firmware -- 125 MHz domain, NEVER gated ---------------+
+|                                                                               |
+|   chip control (SPI)         datapath control (GPIO/AXI)    observability     |
+|   -----------------          -------------------------     (AXI reads)       |
+|   ENSM ALERT/SLEEP/FDD       bridge_reset / bridge_enable   ------------      |
+|   RX/TX LO power up/down     up_enable, up_txnrx GPIOs      up_clock_mon      |
+|   RFDC re-cal on wake        gpio_o[8] "pwr_dn" Tier-1      -> l_clk_hz       |
+|   boot TX-quad restore        reset gate: wired but         adc_status[0] =   |
+|   BIST-residual toggle        DORMANT (never asserted)      CCC lock &&       |
+|                                                             frame ok          |
++--------+--------------------------+----------------------------+--------------+
+         | SPI (alive in SLEEP)     | GPIO / AXI                 | AXI-Lite
+         v                          v                            |
++------- AD9361 -------+   +------------------ fabric ------------------------+
+|                      |   |                                                  |
+| in SLEEP + LO pd:    |   |  DATA_CLK --> CLKINT_PRESERVE --> PF_CCC_C1      |
+|  RF synths     OFF   |   |  61.44 MHz              stays LOCKED through     |
+|  mixers        OFF   |   |     ^                   sleep (measured:         |
+|  ADC/DAC/BB    OFF   |   |     |                   61439514 Hz, no drop)    |
+|  SPI port      ON    |   |     |                   OUT0 l_clk / OUT1 +90    |
+|  BBPLL         ON  --+---+-----+                        |                   |
+|  DATA_CLK      ON    |   |                              v                   |
+|                      |   |  l_clk domain: dev_if, HLS adapter, CDC-FIFO     |
++----------------------+   |  halves -- still CLOCKED, but PARKED (enables    |
+                           |  low, bridge in IDLE) before the chip descends   |
+                           |                                                  |
+                           |  125 MHz domain: CPU, AXI, up regs -- fully ON,  |
+                           |  which is why status is readable while asleep    |
+                           +--------------------------------------------------+
+```
+
+#### The fork: a wire versus a machine
+
+Both ports run the same Tier-0 sleep policy — put the chip down, never
+touch the fabric — with the same firmware sequence on the same chip.
+The architectural difference is what sits between DATA_CLK and l_clk:
+
+```
+axau15 (Xilinx):
+  DATA_CLK --> IBUFGDS --> BUFG --> l_clk
+              (a stateless pipe: no lock, no memory, no phase state)
+
+mpf300 (PolarFire):
+  DATA_CLK --> INBUF_DIFF --> CLKINT_PRESERVE --> PF_CCC PLL --> OUT0 = l_clk
+              (a stateful machine: VCO, lock,               \--> OUT1 = l_clk +90
+               and a phase relationship to maintain)
+```
+
+On the axau15, l_clk is DATA_CLK after two buffers: if the source
+stops, l_clk stops the same nanosecond, and when it returns it is
+instantly valid — no lock concept, nothing to re-acquire, nothing to
+observe (the Xilinx interface hardwires `locked` to 1).
+
+Here l_clk is the output of a PLL whose reference is DATA_CLK itself
+(the +90 deg OUT1 for FB_CLK can only come from a PLL). That machine
+can lose lock, keeps running if the reference dies (free-run at a drift
+frequency) rather than stopping, and must re-acquire on reference
+return — including the OUT0/OUT1 90 deg relationship, which Post-VCO
+feedback re-establishes after any lock event. This is why `power_up`
+gates on the l_clk rate monitor and why the CCC lock is exported to
+`adc_status`. In Tier-0 sleep the measured behavior above (DATA_CLK
+persists, the CCC rides through locked) makes the gate pass
+immediately; the relock machinery becomes load-bearing only if a
+deeper, clocks-off chip sleep is ever used.
+
 ### Fast-multiplier pipeline register (`CPU_FAST_MUL_REG`)
 
 A 33x33 signed multiply becomes a cascade of three 18x18 MACC blocks on
