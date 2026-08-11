@@ -1,0 +1,11 @@
+# Efinity build products (generators in scripts/ are the source of truth)
+ti375c529.xml
+ti375c529.peri.xml
+mem_init/
+outflow/
+work_syn/
+work_pnr/
+work_dbg/
+build_all.log
+*.log
+ifacewriter*
