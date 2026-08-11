@@ -9,9 +9,29 @@ SmartDesign (`Top`) by `build_all.tcl`.
 
 ```sh
 cd deps/hdl/projects/fmcomms2/mpf300
-/media/fpgadev/Dev_Tools/Microchip/run_libero.sh \
+./libero_configuration/run_libero.sh \
     SCRIPT:build_all.tcl LOGFILE:build_all.log
 ```
+
+If Libero and its MegaVault are not at the launcher defaults, override:
+
+```sh
+export LIBERO_INSTALL_DIR=/path/to/Libero_SoC      # dir with Designer/bin/libero
+export LIBERO_LICENSE_SERVER=1702@licensehost      # default 1702@localhost
+export LIBERO_MEGAVAULT=/path/to/Libero_SoC_vX.Y_MegaVault
+```
+
+The default toolchain is **Libero 2026.1**; the flow is verified on both
+2026.1 and 2025.2. To build with 2025.2 instead, point the overrides at
+the sibling install
+(`LIBERO_INSTALL_DIR=/media/fpgadev/Dev_Tools/Microchip_FPGA/2025.2/Libero_SoC`,
+`LIBERO_MEGAVAULT=.../2025.2/MegaVault/Libero_SoC_v2025.2_MegaVault`).
+On any release, `build_all.tcl` auto-discovers the newest
+PF_CCC / PF_INIT_MONITOR versions in the vault;
+`PF_CCC_VERSION` / `PF_INIT_MONITOR_VERSION` env vars force specific ones.
+Note that Libero's *registered* vault (where cores are actually generated
+from) is a user-global setting shared by all installed releases — see
+"Installing Libero SoC" below.
 
 (or Libero GUI: Project -> Execute Script on `build_all.tcl`). The script
 deletes and recreates `./proj`, installs the pre-built `ad9361_no-os`
@@ -23,20 +43,33 @@ route (`MPF300_FMCOMMS2_PNR_OK`).
 ## Libero installation and launcher (Ubuntu 24.04)
 
 Ubuntu 24.04 is not an officially supported Libero host; this section
-records exactly what was done to make Libero SoC 2025.2 work on it. A
+records exactly what was done to make Libero SoC (2025.2, and later
+2026.1, installed side by side) work on it. A
 reference copy of the launcher lives in `./libero_configuration/`.
 
-### Installing Libero SoC 2025.2
+### Installing Libero SoC
 
-1. Download the offline installer (`Libero_SoC_2025.2_offline_lin.sh`)
+1. Download the offline installer (`Libero_SoC_<release>_offline_lin.sh`)
    from Microchip and run it with root privileges:
 
    ```sh
-   sudo ./Libero_SoC_2025.2_offline_lin.sh
+   sudo ./Libero_SoC_2026.1_offline_lin.sh
    ```
 
-   Install path used here: `/media/fpgadev/Dev_Tools/Microchip`.
+   Install layout used here: one directory per release under
+   `/media/fpgadev/Dev_Tools/Microchip_FPGA/` (`2026.1` = the default
+   toolchain, `2025.2` beside it). Each release dir contains its own
+   `Libero_SoC/`, `LicenseDaemons/`, `MegaVault/`, and `SmartHLS/`.
+
+   **Vault caveat:** Libero's registered IP-vault location (where
+   `create_and_configure_core` actually generates from) is a
+   *user-global* setting shared by every installed release, not
+   per-install. It is currently registered to the 2026.1 MegaVault; a
+   `change_vault_location` from any release's session changes it for all
+   of them. Both vaults ship identical PF_CCC / PF_INIT_MONITOR
+   versions, so cross-release generation works either way.
    Components installed (see `LiberoConfig.txt` in the install root):
+   (2025.2 record; 2026.1 was installed identically into its own dir)
    Libero SoC 2025.2, SmartHLS 2025.2, Standalone Program Debug,
    **MegaVault 2025.2** (required — this machine has no route to the
    online IP repository; `build_all.tcl` generates PF_CCC /
@@ -79,33 +112,48 @@ reference copy of the launcher lives in `./libero_configuration/`.
    `snpslmd`, `saltd`):
 
    ```sh
-   cd /media/fpgadev/Dev_Tools/Microchip/LicenseDaemons
-   ./lmgrd -c /media/fpgadev/Dev_Tools/Microchip/Libero_License_active.dat \
-           -l /media/fpgadev/Dev_Tools/Microchip/license_daemon.log
+   cd /media/fpgadev/Dev_Tools/Microchip_FPGA/2026.1/LicenseDaemons
+   ./lmgrd -c /media/fpgadev/Dev_Tools/Microchip_FPGA/Libero_License_active.dat \
+           -l /media/fpgadev/Dev_Tools/Microchip_FPGA/license_daemon.log
    ```
+
+   The license `.dat` files live one level above the per-release install
+   dirs (in `Microchip_FPGA/`) so all Libero releases share them; their
+   `DAEMON`/`VENDOR` lines point at the `2026.1/LicenseDaemons` binaries
+   (those lines are not part of the signed license data and may be edited
+   freely). The daemon is **not** started at boot — if a Libero run fails
+   license checkout, check that port 1702 is listening
+   (`ss -tln | grep 1702`) and start `lmgrd` with the command above.
+   Pristine license originals are kept in
+   `Microchip_FPGA/old_install_backup/`.
 
    The license file's SERVER line uses port **1702**, which is what the
    launcher exports (`1702@localhost`).
 
-### Configuring `run_libero.sh`
+### The `run_libero.sh` launcher
 
-The launcher (installed copy: `/media/fpgadev/Dev_Tools/Microchip/
-run_libero.sh`, reference copy: `./libero_configuration/run_libero.sh`)
-lives outside the repositories on the host — on a new machine, copy the
-reference copy next to the Libero install and edit it there. It does
-exactly two things beyond exec'ing Libero; both may need editing:
+The launcher `./libero_configuration/run_libero.sh` runs from the repo on
+any machine; it is configured by environment variables (no editing
+needed):
 
-1. `LM_LICENSE_FILE=1702@localhost` — point at your FlexLM server
-   (`port@host` from the SERVER line of your license file).
-2. `LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6` — **required
-   on Ubuntu 24.04**. Libero links the system `libxml2`, which pulls the
-   system `libicuuc.so.74`, which requires `GLIBCXX_3.4.30`; Libero's
-   bundled RHEL `libstdc++` (max `GLIBCXX_3.4.28`) is too old, so
-   without the preload `libero_bin` fails at startup. Side effect: every
-   32-bit child tool prints `ERROR: ld.so: object '...libstdc++.so.6'
-   ... wrong ELF class: ELFCLASS64: ignored` — this is harmless noise
-   (a 32-bit process skipping a 64-bit preload), not a failure. On a
-   supported RHEL host neither line 2 nor the noise applies.
+1. `LIBERO_INSTALL_DIR` — the `Libero_SoC` directory (the one containing
+   `Designer/bin/libero`). Defaults to this dev box's 2026.1 install
+   (`Microchip_FPGA/2026.1/Libero_SoC`); set it to the `2025.2` sibling
+   to run the previous release.
+2. `LIBERO_LICENSE_SERVER` — your FlexLM server as `port@host` (from the
+   SERVER line of your license file). Default `1702@localhost`, matching
+   the local-daemon setup above.
+3. `LD_PRELOAD` of the system `libstdc++.so.6` is applied automatically —
+   **required on Ubuntu 24.04**. Libero links the system `libxml2`, which
+   pulls the system `libicuuc.so.74`, which requires `GLIBCXX_3.4.30`;
+   Libero's bundled RHEL `libstdc++` (max `GLIBCXX_3.4.28`) is too old,
+   so without the preload `libero_bin` fails at startup. The launcher
+   probes the Debian/Ubuntu multiarch path, then `/usr/lib64`
+   (RHEL/SUSE), and skips the preload if neither exists. Side effect:
+   every 32-bit child tool prints `ERROR: ld.so: object
+   '...libstdc++.so.6' ... wrong ELF class: ELFCLASS64: ignored` — this
+   is harmless noise (a 32-bit process skipping a 64-bit preload), not a
+   failure.
 
 Usage (headless):
 
@@ -237,7 +285,15 @@ Sequence:
    process may read the tty at a time — two readers split the byte
    stream and both see garbage.
 
-## Status / timing (Libero 2025.2)
+## Status / timing (Libero 2025.2; 2026.1 verified equivalent)
+
+> The numbers below were captured on Libero 2025.2. The same design was
+> rebuilt under Libero 2026.1 (2026-08-11) with all flow stages passing
+> and timing met in every constrained domain (worst slack +0.037 ns on
+> `l_clk_pll`, `clk_125mhz` +1.209 ns, `tx_fb_clk` +0.811 ns,
+> `tx_fbclk_90` +3.462 ns); the SPI-flash image was byte-identical. The
+> 2025.2 batch-mode segfault workaround (`cfg/spiflash.cfg` STATIC_FILL
+> placeholder) is harmless under 2026.1 and is retained.
 
 The design is fully operational on the Splash Kit: power-up loads the
 NEORV32 firmware from SPI flash into the IMEM LSRAMs (jumper and SPI

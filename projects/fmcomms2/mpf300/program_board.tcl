@@ -19,12 +19,17 @@
 #
 # How to run (headless):
 #   cd deps/hdl/projects/fmcomms2/mpf300
-#   /media/fpgadev/Dev_Tools/Microchip/run_libero.sh \
+#   ./libero_configuration/run_libero.sh \
 #       SCRIPT:program_board.tcl LOGFILE:program_board.log
+#   (set LIBERO_INSTALL_DIR if Libero is not at the launcher's default
+#   location; see libero_configuration/run_libero.sh)
 #
 # Environment / prerequisites:
-#   - Libero SoC 2025.2 with a license seat free (same setup as build_all.tcl;
-#     run_libero.sh handles PATH and licensing).
+#   - Libero SoC with a license seat free (same setup as build_all.tcl;
+#     run_libero.sh handles PATH and licensing; verified on 2025.2 and
+#     2026.1 -- the known-flakiness notes below were observed on 2025.2).
+#   - Run with the SAME Libero release that built ./proj: a .prjx created
+#     by a newer Libero cannot be opened by an older one.
 #   - The project must already be BUILT: ./proj/ with bitstream + SPI image
 #     generated (run build_all.tcl first; look for MPF300_FMCOMMS2_EXPORT_OK).
 #   - Board: MPF300-SPLASH-KIT on 12 V/5 A supply, powered ON (SW1), mini-USB
@@ -72,7 +77,8 @@
 #
 ###############################################################################
 
-open_project -file {/media/fpgadev/Dev_Tools/Work/QPSK_Triple_Comparison/deps/hdl/projects/fmcomms2/mpf300/proj/fmcomms2_mpf300.prjx}
+# Locate the project relative to this script so any checkout works
+open_project -file [file join [file dirname [file normalize [info script]]] proj fmcomms2_mpf300.prjx]
 
 # Set to 1 to skip step 1 (fabric + sNVM) and program only the SPI flash --
 # the firmware-only update path. The fabric has a ~1000-programming-cycle
