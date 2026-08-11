@@ -9,7 +9,7 @@
 # adapted for synthesis targeting the AU15P board with FMCOMMS2/4 FMC card.
 #
 # Usage (from Vivado TCL console):
-#   cd {C:/Work/Sandbox/QPSK_Triple_Comparison/deps/hdl/projects/fmcomms2/au15p}
+#   cd {path/to/deps/hdl/projects/fmcomms2/au15p}
 #   source build_all.tcl
 #   build_all
 #
@@ -26,8 +26,52 @@
 
 variable project_name "fmcomms2_au15p"
 variable part "xcau15p-ffvb676-2-e"
-variable project_dir [file dirname [info script]]
+variable project_dir [file normalize [file dirname [info script]]]
 variable top_level_bd_name "Top"
+
+###############################################################################
+# IP version resolution
+###############################################################################
+#
+# create_bd_cell needs a fully-versioned VLNV, but Xilinx bumps IP major.minor
+# versions between Vivado releases, and re-exported user IP (NEORV32, ADI, HLS)
+# can move too. Resolve the version against the IP catalog at build time:
+# prefer the version this script was validated with, otherwise fall back to the
+# newest version in the catalog with a warning. This keeps the script working
+# across Vivado releases (e.g. 2025.2 -> 2026.1) without editing every
+# create_bd_cell call.
+#
+proc resolve_ip_vlnv {vlnv_base {validated_version ""}} {
+    # Exact match on the validated version, if the catalog still ships it
+    if {$validated_version ne ""} {
+        set exact [get_ipdefs -quiet "${vlnv_base}:${validated_version}"]
+        if {[llength $exact] > 0} {
+            return [lindex $exact 0]
+        }
+    }
+
+    # Fall back to the newest version present in the catalog
+    set defs [get_ipdefs -quiet "${vlnv_base}:*"]
+    if {[llength $defs] == 0} {
+        error "resolve_ip_vlnv: no IP matching '${vlnv_base}:*' in the IP\
+ catalog. Check that the required IP repositories are set up and the catalog\
+ is up to date."
+    }
+    set best ""
+    set best_version ""
+    foreach def $defs {
+        set version [lindex [split $def ":"] 3]
+        if {$best eq "" || [package vcompare $version $best_version] > 0} {
+            set best $def
+            set best_version $version
+        }
+    }
+    if {$validated_version ne ""} {
+        puts "WARNING: ${vlnv_base}:${validated_version} not found in the IP\
+ catalog; using $best instead."
+    }
+    return $best
+}
 
 ###############################################################################
 # Block design component names
@@ -84,7 +128,7 @@ proc check_board_files {} {
         puts ""
         puts "     WINDOWS (requires admin privileges):"
         puts "       Copy to: <Vivado_Install>/data/boards/board_files/"
-        puts "       Example: C:\\Xilinx\\Vivado\\2025.2\\data\\boards\\board_files\\aub15p"
+        puts "       Example: C:\\Xilinx\\Vivado\\<version>\\data\\boards\\board_files\\aub15p"
         puts ""
         puts "     WINDOWS (user-specific, no admin required):"
         puts "       Copy to: %APPDATA%\\Xilinx\\Vivado\\board_files\\"
@@ -92,7 +136,7 @@ proc check_board_files {} {
         puts ""
         puts "     LINUX (system-wide):"
         puts "       Copy to: <Vivado_Install>/data/boards/board_files/"
-        puts "       Example: /opt/Xilinx/Vivado/2025.2/data/boards/board_files/aub15p"
+        puts "       Example: /opt/Xilinx/Vivado/<version>/data/boards/board_files/aub15p"
         puts ""
         puts "     LINUX (user-specific, no admin required):"
         puts "       Copy to: ~/.Xilinx/Vivado/board_files/"
@@ -132,7 +176,7 @@ proc build_all {} {
         puts ""
         puts "  Set it to point to the ADI HDL IP library root:"
         puts ""
-        puts "    Windows: set ADI_IP_LOCATION=C:\\Work\\QPSK_Triple_Comparison\\deps\\hdl\\library"
+        puts "    Windows: set ADI_IP_LOCATION=C:\\path\\to\\QPSK_Triple_Comparison\\deps\\hdl\\library"
         puts "    Linux:   export ADI_IP_LOCATION=/path/to/deps/hdl/library"
         puts ""
         puts "  The ADI library IPs must be built first:"
@@ -163,7 +207,7 @@ proc build_all {} {
     # Create the project targeting the AU15P part
     puts "INFO: Creating project..."
 
-    if {[catch {create_project $project_name . -part $part -force} result]} {
+    if {[catch {create_project $project_name $project_dir -part $part -force} result]} {
         puts "ERROR: Failed to create project: $result"
         return -1
     }
@@ -287,11 +331,11 @@ proc build_all {} {
     }
 
     # Reopen the block design
-    open_bd_design ./$project_name.srcs/$synth_sources_name/bd/$top_level_bd_name/$top_level_bd_name.bd
+    open_bd_design $project_dir/$project_name.srcs/$synth_sources_name/bd/$top_level_bd_name/$top_level_bd_name.bd
 
     # Instantiate NEORV32 in block design
     puts "INFO: Instantiating NEORV32 in block design..."
-    create_bd_cell -type ip -vlnv NEORV32:user:neorv32_vivado_ip:1.0 $neorv32_cpu
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv NEORV32:user:neorv32_vivado_ip 1.0] $neorv32_cpu
 
     # Configure NEORV32 for AU15P / FMCOMMS2 application
     set_property -dict [list \
@@ -323,7 +367,7 @@ proc build_all {} {
 
     # Add board clock input and MMCM.
     # Specify only the frequencies we need; let Vivado pick MMCM M/D/CLKOUT divides.
-    create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz:6.0 $ecs_clock_300_mhz
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:clk_wiz 6.0] $ecs_clock_300_mhz
     set_property -dict [list \
         CONFIG.AUTO_PRIMITIVE {PLL} \
         CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {150.000} \
@@ -362,10 +406,10 @@ proc build_all {} {
     endgroup
 
     # Create reset and clocking
-    create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 $cpu_sys_reset
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:proc_sys_reset 5.0] $cpu_sys_reset
 
     # Create inverter for the NEORV32 active low input reset
-    create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 $neorv32_cpu_input_reset
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:util_vector_logic 2.0] $neorv32_cpu_input_reset
     set_property -dict [list \
         CONFIG.C_OPERATION {not} \
         CONFIG.C_SIZE {1} \
@@ -388,7 +432,7 @@ proc build_all {} {
         make_bd_pins_external [get_bd_pins $neorv32_cpu/spi_dat_i]
         set_property name spi_miso [get_bd_ports spi_dat_i_0]
         # spi_csn_o is an 8-bit bus — extract bit 0 via xlslice for the single AD9361 CS
-        create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 spi_csn_slice
+        create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] spi_csn_slice
         set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0}] [get_bd_cells spi_csn_slice]
         connect_bd_net [get_bd_pins $neorv32_cpu/spi_csn_o] [get_bd_pins spi_csn_slice/Din]
         create_bd_port -dir O spi_csn_0
@@ -397,7 +441,7 @@ proc build_all {} {
 
     # Create the main AXI CPU interconnect
     # NUM_MI = 3: BRAM controller, axi_ad9361, axi_ad9361_adapter
-    create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 $axi_cpu_interconnect
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:smartconnect 1.0] $axi_cpu_interconnect
     set_property -dict [list \
         CONFIG.NUM_MI {3} \
         CONFIG.NUM_SI {1} \
@@ -408,11 +452,11 @@ proc build_all {} {
     ###########################################################################
 
     # Create the AXI BRAM controller and the BRAM block itself
-    create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 $axi_bram_controller
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:axi_bram_ctrl 4.1] $axi_bram_controller
     set_property CONFIG.SINGLE_PORT_BRAM {1} [get_bd_cells $axi_bram_controller]
     set_property CONFIG.READ_LATENCY {2} [get_bd_cells $axi_bram_controller]
     set_property CONFIG.PROTOCOL {AXI4} [get_bd_cells $axi_bram_controller]
-    create_bd_cell -type ip -vlnv xilinx.com:ip:blk_mem_gen:8.4 $qpsk_snapshot_bram
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:blk_mem_gen 8.4] $qpsk_snapshot_bram
     set_property -dict [list CONFIG.Enable_32bit_Address.VALUE_SRC PROPAGATED] [get_bd_cells $qpsk_snapshot_bram]
 
     # Configure BRAM (no COE initialization for synthesis)
@@ -435,7 +479,7 @@ proc build_all {} {
     puts "INFO: Instantiating AD9361 core and datapath..."
 
     # Create AD9361 core
-    create_bd_cell -type ip -vlnv analog.com:user:axi_ad9361:1.0 $axi_ad9361
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv analog.com:user:axi_ad9361 1.0] $axi_ad9361
     set_property -dict [list \
         CONFIG.CMOS_OR_LVDS_N {0} \
         CONFIG.ID {0} \
@@ -479,35 +523,35 @@ proc build_all {} {
     create_bd_port -dir O txnrx
 
     # ─── RX data: concat 5-bit bus + 1-bit scalar into 6-bit IP pin ───
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 rx_data_p_concat
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlconcat 2.1] rx_data_p_concat
     set_property -dict [list CONFIG.NUM_PORTS {2} CONFIG.IN0_WIDTH {5} CONFIG.IN1_WIDTH {1}] [get_bd_cells rx_data_p_concat]
     connect_bd_net [get_bd_ports rx_data_in_p]  [get_bd_pins rx_data_p_concat/In0]
     connect_bd_net [get_bd_ports rx_data_5_se]  [get_bd_pins rx_data_p_concat/In1]
     connect_bd_net [get_bd_pins rx_data_p_concat/dout] [get_bd_pins $axi_ad9361/rx_data_in_p]
 
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 rx_data_n_concat
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlconcat 2.1] rx_data_n_concat
     set_property -dict [list CONFIG.NUM_PORTS {2} CONFIG.IN0_WIDTH {5} CONFIG.IN1_WIDTH {1}] [get_bd_cells rx_data_n_concat]
     connect_bd_net [get_bd_ports rx_data_in_n]       [get_bd_pins rx_data_n_concat/In0]
     connect_bd_net [get_bd_ports rx_data_5_se_unused] [get_bd_pins rx_data_n_concat/In1]
     connect_bd_net [get_bd_pins rx_data_n_concat/dout] [get_bd_pins $axi_ad9361/rx_data_in_n]
 
     # ─── TX data: slice 6-bit IP pin into 5-bit bus + 1-bit scalar ───
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_p_hp_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] tx_data_p_hp_slice
     set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {5} CONFIG.DIN_TO {1}] [get_bd_cells tx_data_p_hp_slice]
     connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_p] [get_bd_pins tx_data_p_hp_slice/Din]
     connect_bd_net [get_bd_pins tx_data_p_hp_slice/Dout]   [get_bd_ports tx_data_out_p]
 
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_n_hp_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] tx_data_n_hp_slice
     set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {5} CONFIG.DIN_TO {1}] [get_bd_cells tx_data_n_hp_slice]
     connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_n] [get_bd_pins tx_data_n_hp_slice/Din]
     connect_bd_net [get_bd_pins tx_data_n_hp_slice/Dout]   [get_bd_ports tx_data_out_n]
 
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_p_hd_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] tx_data_p_hd_slice
     set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0}] [get_bd_cells tx_data_p_hd_slice]
     connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_p] [get_bd_pins tx_data_p_hd_slice/Din]
     connect_bd_net [get_bd_pins tx_data_p_hd_slice/Dout]   [get_bd_ports tx_d0_se_true]
 
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 tx_data_n_hd_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] tx_data_n_hd_slice
     set_property -dict [list CONFIG.DIN_WIDTH {6} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0}] [get_bd_cells tx_data_n_hd_slice]
     connect_bd_net [get_bd_pins $axi_ad9361/tx_data_out_n] [get_bd_pins tx_data_n_hd_slice/Din]
     connect_bd_net [get_bd_pins tx_data_n_hd_slice/Dout]   [get_bd_ports tx_d0_se_comp]
@@ -525,7 +569,7 @@ proc build_all {} {
     connect_bd_net [get_bd_ports txnrx] [get_bd_pins $axi_ad9361/txnrx]
 
     # Tie off tdd_sync (TDD not used — running FDD mode)
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tdd_sync_const
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlconstant 1.1] tdd_sync_const
     set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] [get_bd_cells tdd_sync_const]
     connect_bd_net [get_bd_pins tdd_sync_const/dout] [get_bd_pins $axi_ad9361/tdd_sync]
 
@@ -541,9 +585,9 @@ proc build_all {} {
 
     # Connect up_enable and up_txnrx from NEORV32 GPIO
     # GPIO[0] = up_enable, GPIO[1] = up_txnrx
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 gpio_up_enable_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] gpio_up_enable_slice
     set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {0} CONFIG.DIN_TO {0}] [get_bd_cells gpio_up_enable_slice]
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 gpio_up_txnrx_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] gpio_up_txnrx_slice
     set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {1} CONFIG.DIN_TO {1}] [get_bd_cells gpio_up_txnrx_slice]
 
     connect_bd_net [get_bd_pins $neorv32_cpu/gpio_o] [get_bd_pins gpio_up_enable_slice/Din]
@@ -553,36 +597,36 @@ proc build_all {} {
 
     # Additional GPIO slices for AD9361 control signals
     # GPIO[2] = gpio_resetb (AD9361 hard reset)
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 gpio_resetb_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] gpio_resetb_slice
     set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {2} CONFIG.DIN_TO {2}] [get_bd_cells gpio_resetb_slice]
     connect_bd_net [get_bd_pins $neorv32_cpu/gpio_o] [get_bd_pins gpio_resetb_slice/Din]
     create_bd_port -dir O gpio_resetb
     connect_bd_net [get_bd_pins gpio_resetb_slice/Dout] [get_bd_ports gpio_resetb]
 
     # GPIO[3] = gpio_sync (multi-chip sync)
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 gpio_sync_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] gpio_sync_slice
     set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {3} CONFIG.DIN_TO {3}] [get_bd_cells gpio_sync_slice]
     connect_bd_net [get_bd_pins $neorv32_cpu/gpio_o] [get_bd_pins gpio_sync_slice/Din]
     create_bd_port -dir O gpio_sync
     connect_bd_net [get_bd_pins gpio_sync_slice/Dout] [get_bd_ports gpio_sync]
 
     # GPIO[4] = gpio_en_agc (AGC enable)
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 gpio_en_agc_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] gpio_en_agc_slice
     set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {4} CONFIG.DIN_TO {4}] [get_bd_cells gpio_en_agc_slice]
     connect_bd_net [get_bd_pins $neorv32_cpu/gpio_o] [get_bd_pins gpio_en_agc_slice/Din]
     create_bd_port -dir O gpio_en_agc
     connect_bd_net [get_bd_pins gpio_en_agc_slice/Dout] [get_bd_ports gpio_en_agc]
 
     # GPIO[7:5] = gpio_ctl[3:0] (control signals, padded with constant 0 for bit 3)
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 gpio_ctl_slice
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlslice 1.0] gpio_ctl_slice
     set_property -dict [list CONFIG.DIN_WIDTH {8} CONFIG.DIN_FROM {7} CONFIG.DIN_TO {5} CONFIG.DOUT_WIDTH {3}] [get_bd_cells gpio_ctl_slice]
     connect_bd_net [get_bd_pins $neorv32_cpu/gpio_o] [get_bd_pins gpio_ctl_slice/Din]
     create_bd_port -dir O -from 3 -to 0 gpio_ctl
     # Concatenate the 3-bit slice with a constant 0 for gpio_ctl[3]
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 gpio_ctl_concat
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlconcat 2.1] gpio_ctl_concat
     set_property CONFIG.NUM_PORTS {2} [get_bd_cells gpio_ctl_concat]
     connect_bd_net [get_bd_pins gpio_ctl_slice/Dout] [get_bd_pins gpio_ctl_concat/In0]
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 gpio_ctl_pad_const
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlconstant 1.1] gpio_ctl_pad_const
     set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] [get_bd_cells gpio_ctl_pad_const]
     connect_bd_net [get_bd_pins gpio_ctl_pad_const/dout] [get_bd_pins gpio_ctl_concat/In1]
     connect_bd_net [get_bd_pins gpio_ctl_concat/dout] [get_bd_ports gpio_ctl]
@@ -598,7 +642,7 @@ proc build_all {} {
     puts "INFO: Creating l_clk domain reset synchronizer..."
 
     # Reset synchronizer for l_clk domain (used by HLS adapter datapath)
-    create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 $util_ad9361_lclk_reset
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:proc_sys_reset 5.0] $util_ad9361_lclk_reset
     connect_bd_net [get_bd_pins $cpu_sys_reset/peripheral_aresetn] [get_bd_pins $util_ad9361_lclk_reset/ext_reset_in]
     connect_bd_net [get_bd_pins $axi_ad9361/l_clk] [get_bd_pins $util_ad9361_lclk_reset/slowest_sync_clk]
 
@@ -612,7 +656,7 @@ proc build_all {} {
     puts "INFO: Instantiating AXI AD9361 Adapter..."
 
     # Create the HLS adapter IP (v5.0: AXI-Stream + ap_none, single clock domain)
-    create_bd_cell -type ip -vlnv user:hls:axi_ad9361_adapter:5.0 $axi_ad9361_adapter
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv user:hls:axi_ad9361_adapter 5.0] $axi_ad9361_adapter
 
     # Connect adapter clock and reset (l_clk domain)
     connect_bd_net [get_bd_pins $axi_ad9361/l_clk] [get_bd_pins $axi_ad9361_adapter/ap_clk]
@@ -636,7 +680,7 @@ proc build_all {} {
     connect_bd_net [get_bd_pins $axi_ad9361/adc_valid_q1] [get_bd_pins $axi_ad9361_adapter/adc_valid_q1]
 
     # ADC overflow handling
-    create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 adc_dovf_const
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:xlconstant 1.1] adc_dovf_const
     set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] [get_bd_cells adc_dovf_const]
     connect_bd_net [get_bd_pins adc_dovf_const/dout] [get_bd_pins $axi_ad9361/adc_dovf]
     connect_bd_net [get_bd_pins adc_dovf_const/dout] [get_bd_pins $axi_ad9361_adapter/adc_dovf]
@@ -674,7 +718,7 @@ proc build_all {} {
 
     puts "INFO: Instantiating AXI-Lite to Streaming Adapter..."
 
-    create_bd_cell -type ip -vlnv user:hls:axi_lite_to_streaming_adapter:1.0 $axi_streaming_adapter
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv user:hls:axi_lite_to_streaming_adapter 1.0] $axi_streaming_adapter
 
     # Connect adapter clock and reset (150 MHz AXI domain)
     connect_bd_net [get_bd_pins $ecs_clock_300_mhz/clk_out1] [get_bd_pins $axi_streaming_adapter/ap_clk]
@@ -687,7 +731,7 @@ proc build_all {} {
     puts "INFO: Instantiating AXI-Stream CDC FIFOs..."
 
     # TX CDC FIFO: axi_streaming_adapter (150 MHz) -> ad9361_adapter (l_clk)
-    create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo:2.0 $ad9361_cdc_tx_streaming_fifo
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:axis_data_fifo 2.0] $ad9361_cdc_tx_streaming_fifo
     set_property -dict [list CONFIG.HAS_TLAST.VALUE_SRC USER] [get_bd_cells $ad9361_cdc_tx_streaming_fifo]
     set_property -dict [list \
         CONFIG.FIFO_DEPTH {256} \
@@ -707,7 +751,7 @@ proc build_all {} {
     # RX CDC FIFO: ad9361_adapter (l_clk) -> axi_streaming_adapter (150 MHz)
     # ap_clk (150 MHz) is intentionally faster than l_clk (max 125 MHz) so the
     # RX FIFO drains faster than the AD9361 fills it — prevents overflow.
-    create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo:2.0 $ad9361_cdc_rx_streaming_fifo
+    create_bd_cell -type ip -vlnv [resolve_ip_vlnv xilinx.com:ip:axis_data_fifo 2.0] $ad9361_cdc_rx_streaming_fifo
     set_property -dict [list CONFIG.HAS_TLAST.VALUE_SRC USER] [get_bd_cells $ad9361_cdc_rx_streaming_fifo]
     set_property -dict [list \
         CONFIG.FIFO_DEPTH {256} \
